@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "juanita-mealie"
-version = "0.1.0"
+version = "0.2.0"
 description = "Juanita — import recipes into Mealie from many sources (YouTube, text files, and more) using Claude."
 readme = "README.md"
 requires-python = ">=3.11"
