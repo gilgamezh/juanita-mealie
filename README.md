@@ -8,8 +8,10 @@ does the prep: pulls the content (transcript via
 source's own language, and creates it in Mealie via the API — ingredients linked
 to your foods database, with the source URL and thumbnail attached when available.
 
-> Named after the unseen TV-cooking helper who quietly did all the prep and
-> dirty work while the star took the spotlight. That's the job.
+> Named after [Juanita Bordoy](https://es.wikipedia.org/wiki/Juanita_Bordoy),
+> Doña Petrona's assistant on Argentine TV, who for decades did the prep and the
+> dirty work off to the side while the star took the spotlight. See
+> [The name](#the-name) — it's worth knowing whose labor the name honors.
 
 The PyPI distribution is `juanita-mealie`; the command you run is `juanita`.
 
@@ -177,6 +179,27 @@ Lint with ruff:
 ```bash
 fades -d ruff -x ruff -- check src
 ```
+
+## The name
+
+[Juana "Juanita" Bordoy](https://es.wikipedia.org/wiki/Juanita_Bordoy)
+(1916–1995) was the kitchen assistant of Doña Petrona C. de Gandulfo, Argentina's
+most famous cook. From around 1945 until Doña Petrona's death in 1992, Juanita
+did the unglamorous half of the work on live television — beating, cleaning,
+mixing, measuring, prepping — almost always silent and in the background while
+Doña Petrona presented. She became so emblematic that *"ser una Juanita"* entered
+Argentine speech for the person doing the supporting, behind-the-scenes work.
+
+Naming a tool after her is affectionate, but it shouldn't flatten the story: it's
+also one of a celebrated *patrona* and the working-class domestic employee whose
+labor made the show run yet was paid and recognized very differently. That
+inequality is the point worth remembering — this tool is "the Juanita," doing the
+prep so your Mealie library looks effortless.
+
+If you want the real history, read Rebekah E. Pite, ["Entertaining Inequalities:
+Doña Petrona, Juanita Bordoy, and Domestic Work in Mid-Twentieth-Century
+Argentina,"](https://read.dukeupress.edu/hahr/article/91/1/97/70686/Entertaining-Inequalities-Dona-Petrona-Juanita)
+*Hispanic American Historical Review* 91, no. 1 (2011): 97–128.
 
 ## License
 

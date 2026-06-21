@@ -10,10 +10,13 @@ videos (via `yt-dlp` transcripts) and local recipe text files. Claude extracts a
 structured recipe and it's created via the Mealie REST API, with foods/units
 linked and the source URL + thumbnail attached when available.
 
-The name is a nod to "Juanita", the unseen TV-cooking helper who does the prep
-and the dirty work — which is exactly this tool's job. Keep the source-agnostic
-framing when extending it; new input types (a webpage, a photo, …) should plug
-into the same source-record → extract → push pipeline.
+The name honors Juanita Bordoy (1916–1995), Doña Petrona's TV kitchen assistant
+who did the prep and the dirty work in the background — see the "The name"
+section in the README, which also names the patrona/domestic-worker inequality
+behind it and cites Rebekah Pite's article. Keep that framing (affectionate, not
+flattening) if you touch the branding. Keep the pipeline source-agnostic too: new
+input types (a webpage, a photo, …) should plug into the same source-record →
+extract → push flow.
 
 ## Layout
 
