@@ -52,8 +52,21 @@ The console script `youtube-to-mealie` maps to `youtube_to_mealie.cli:main`.
 
 ## Configuration
 
-Loaded from `.env` in the current working directory (`load_dotenv`, which does
-**not** override real env vars) or the environment:
+`load_config()` populates `os.environ` from the first config source that exists,
+using `setdefault` so real environment variables always win:
+
+1. `--config FILE` / `-c FILE` (must exist, else `ap.error`).
+2. `./.env` in the current directory.
+3. `user_config_path()` — `$XDG_CONFIG_HOME/youtube-to-mealie/config.env`,
+   defaulting to `~/.config/youtube-to-mealie/config.env`.
+
+All files share the same `KEY=VALUE` format (`load_dotenv`). The `init`
+subcommand (`youtube-to-mealie init`, handled in `main()` before argparse via
+`_init_command` → `init_config`) interactively prompts and writes the per-user
+config with mode `0600` (it holds secrets — `SECRET_KEYS` are read via
+`getpass`). `init` accepts `-c FILE` to write elsewhere.
+
+Settings:
 
 - `ANTHROPIC_API_KEY` — required.
 - `MEALIE_URL` — required unless `--dry-run`.

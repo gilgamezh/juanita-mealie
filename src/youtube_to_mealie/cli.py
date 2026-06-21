@@ -23,9 +23,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import logging
 import os
+import stat
+import sys
 import time
 from pathlib import Path
 
@@ -60,13 +63,29 @@ def set_up_logging(verbose: bool, quiet: bool) -> None:
     log.addHandler(handler)
 
 
-# ---- .env -------------------------------------------------------------------
+# ---- config -----------------------------------------------------------------
 
-def load_dotenv(path: Path) -> None:
-    """Minimal .env loader: KEY=VALUE lines, # comments, optional quotes.
-    Does not override variables already set in the environment."""
+# Settings the tool reads, in KEY=VALUE form (also valid environment variables).
+SECRET_KEYS = ("ANTHROPIC_API_KEY", "MEALIE_TOKEN")
+
+
+def user_config_path() -> Path:
+    """Default per-user config file, honoring XDG_CONFIG_HOME.
+
+    e.g. ~/.config/youtube-to-mealie/config.env
+    """
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(Path.home(), ".config")
+    return Path(base) / "youtube-to-mealie" / "config.env"
+
+
+def load_dotenv(path: Path) -> bool:
+    """Minimal .env/config loader: KEY=VALUE lines, # comments, optional quotes.
+
+    Does not override variables already set in the environment. Returns True if
+    the file existed and was read.
+    """
     if not path.exists():
-        return
+        return False
     for line in path.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -74,6 +93,82 @@ def load_dotenv(path: Path) -> None:
         key, _, value = line.partition("=")
         key, value = key.strip(), value.strip().strip('"').strip("'")
         os.environ.setdefault(key, value)
+    return True
+
+
+def load_config(explicit: str | None) -> None:
+    """Populate os.environ from a config file (real env vars still win).
+
+    Resolution order, first hit wins for any given key (load_dotenv uses
+    setdefault, so earlier sources take precedence):
+      1. --config FILE, if given (must exist).
+      2. ./.env in the current directory.
+      3. The per-user config (see user_config_path()).
+    """
+    if explicit:
+        path = Path(explicit).expanduser()
+        if not load_dotenv(path):
+            raise FileNotFoundError(f"config file not found: {path}")
+        log.debug("loaded config from %s", path)
+        return
+    if load_dotenv(Path.cwd() / ".env"):
+        log.debug("loaded config from ./.env")
+    if load_dotenv(user_config_path()):
+        log.debug("loaded config from %s", user_config_path())
+
+
+def _prompt(label: str, *, secret: bool, default: str | None = None) -> str:
+    suffix = f" [{default}]" if default else ""
+    ask = getpass.getpass if secret else input
+    while True:
+        value = ask(f"{label}{suffix}: ").strip()
+        if value:
+            return value
+        if default is not None:
+            return default
+        if not secret:
+            return ""  # allow leaving optional plain fields blank
+        print("  (required — please enter a value)")
+
+
+def init_config(path: Path | None) -> int:
+    """Interactively create the config file, prompting for keys and secrets."""
+    target = (Path(path).expanduser() if path else user_config_path())
+    print(f"Creating youtube-to-mealie config at:\n  {target}\n")
+    if target.exists():
+        ans = input("File already exists. Overwrite? [y/N]: ").strip().lower()
+        if ans not in ("y", "yes"):
+            print("Aborted; existing config left untouched.")
+            return 1
+
+    print("Enter your settings (input for keys/tokens is hidden):\n")
+    anthropic_key = _prompt("Anthropic API key", secret=True)
+    mealie_url = _prompt("Mealie base URL (no trailing slash, blank to skip)",
+                         secret=False).rstrip("/")
+    mealie_token = ""
+    if mealie_url:
+        mealie_token = _prompt("Mealie API token", secret=True)
+    cookies = _prompt("YouTube cookies-from-browser (e.g. firefox; blank for none)",
+                      secret=False)
+
+    lines = [
+        "# youtube-to-mealie config. Real environment variables override these.",
+        "# Regenerate with: youtube-to-mealie init",
+        "",
+        f"ANTHROPIC_API_KEY={anthropic_key}",
+    ]
+    if mealie_url:
+        lines += [f"MEALIE_URL={mealie_url}", f"MEALIE_TOKEN={mealie_token}"]
+    if cookies:
+        lines.append(f"YTDLP_COOKIES_FROM_BROWSER={cookies}")
+    lines.append("")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines))
+    target.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600 — it holds secrets
+    print(f"\nWrote {target} (permissions 0600).")
+    print("You can now run, e.g.:\n  youtube-to-mealie https://youtu.be/VIDEO_ID")
+    return 0
 
 
 # ---- 1. YouTube -------------------------------------------------------------
@@ -174,7 +269,8 @@ class Recipe(BaseModel):
     name: str = Field(description="Short recipe title, e.g. 'Creamy Sesame Ginger Dressing'")
     description: str = Field(description="One or two appetizing sentences. No URLs.")
     recipe_yield: str = Field(description="Yield/servings, e.g. '4 servings' or '1 jar'")
-    ingredients: list[str] = Field(description="Each ingredient as one line, with quantity if stated")
+    ingredients: list[str] = Field(
+        description="Each ingredient as one line, with quantity if stated")
     instructions: list[str] = Field(description="Ordered steps, one per item")
     tags: list[str] = Field(description="3-6 lowercase kebab-case tags")
 
@@ -204,7 +300,8 @@ def extract_recipe(client: anthropic.Anthropic, video: dict) -> Recipe:
         resp.stop_reason, resp.usage.input_tokens, resp.usage.output_tokens,
     )
     if resp.parsed_output is None:
-        raise RuntimeError(f"Claude did not return a parseable recipe (stop_reason={resp.stop_reason})")
+        raise RuntimeError(
+            f"Claude did not return a parseable recipe (stop_reason={resp.stop_reason})")
     return resp.parsed_output
 
 
@@ -277,7 +374,8 @@ class Mealie:
         _check(r)
 
 
-def push_to_mealie(mealie: Mealie, recipe: Recipe, video: dict, *, include_tags: bool = True) -> str:
+def push_to_mealie(mealie: Mealie, recipe: Recipe, video: dict, *,
+                   include_tags: bool = True) -> str:
     slug = mealie.create(recipe.name)
     log.debug("mealie: created recipe slug %s", slug)
     doc = mealie.get(slug)
@@ -313,24 +411,52 @@ def push_to_mealie(mealie: Mealie, recipe: Recipe, video: dict, *, include_tags:
 
 # ---- CLI --------------------------------------------------------------------
 
-def main() -> int:
+def _init_command(argv: list[str]) -> int:
+    ip = argparse.ArgumentParser(
+        prog="youtube-to-mealie init",
+        description="Interactively create the config file (stored in your home by default).",
+    )
+    ip.add_argument("-c", "--config", metavar="FILE",
+                    help="Write the config to FILE instead of the default user path")
+    args = ip.parse_args(argv)
+    set_up_logging(False, False)
+    return init_config(Path(args.config) if args.config else None)
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    # `youtube-to-mealie init [...]` creates the config file and exits.
+    if argv and argv[0] == "init":
+        return _init_command(argv[1:])
+
     ap = argparse.ArgumentParser(description="Import YouTube cooking videos into Mealie.")
     ap.add_argument("urls", nargs="*", help="YouTube URLs")
+    ap.add_argument("-c", "--config", metavar="FILE",
+                    help="Path to a config file (KEY=VALUE). Run `youtube-to-mealie init` "
+                         "to create one. Defaults to ./.env then the per-user config.")
     ap.add_argument("--from-file", help="Read URLs from a file, one per line")
-    ap.add_argument("--dry-run", action="store_true", help="Print the parsed recipe, don't push to Mealie")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="Print the parsed recipe, don't push to Mealie")
     ap.add_argument("--no-tags", action="store_true", help="Don't attach tags to recipes")
     ap.add_argument("--cookies-from-browser", metavar="BROWSER",
                     help="Load YouTube cookies from a browser (firefox, chrome, ...) "
                          "to avoid caption-download rate limits (HTTP 429)")
-    ap.add_argument("--cookies", metavar="FILE", help="Path to a cookies.txt file (alternative to --cookies-from-browser)")
-    ap.add_argument("-v", "--verbose", action="store_true", help="Verbose logging (full tracebacks)")
+    ap.add_argument("--cookies", metavar="FILE",
+                    help="Path to a cookies.txt file (alternative to --cookies-from-browser)")
+    ap.add_argument("-v", "--verbose", action="store_true",
+                    help="Verbose logging (full tracebacks)")
     ap.add_argument("-q", "--quiet", action="store_true", help="Only log warnings and errors")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     set_up_logging(args.verbose, args.quiet)
 
-    # Load .env from the current working directory (real env vars still win).
-    load_dotenv(Path.cwd() / ".env")
+    # Load config: --config FILE, else ./.env, else the per-user config.
+    # Real environment variables always take precedence.
+    try:
+        load_config(args.config)
+    except FileNotFoundError as e:
+        ap.error(str(e))
 
     # Cookies: CLI flag wins, else YTDLP_COOKIES_FROM_BROWSER from env/.env.
     cookies_from_browser = args.cookies_from_browser or os.environ.get("YTDLP_COOKIES_FROM_BROWSER")
@@ -342,12 +468,16 @@ def main() -> int:
     if not urls:
         ap.error("no URLs given")
 
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        ap.error("ANTHROPIC_API_KEY is not set. Run `youtube-to-mealie init` to create a "
+                 "config, or set it in the environment / a --config file.")
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
     mealie = None
     if not args.dry_run:
         base, token = os.environ.get("MEALIE_URL"), os.environ.get("MEALIE_TOKEN")
         if not base or not token:
-            ap.error("set MEALIE_URL and MEALIE_TOKEN (or use --dry-run)")
+            ap.error("set MEALIE_URL and MEALIE_TOKEN (run `youtube-to-mealie init`, "
+                     "use a --config file, or pass --dry-run)")
         mealie = Mealie(base, token)
 
     failures = 0
