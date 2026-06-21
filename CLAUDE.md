@@ -4,22 +4,28 @@ Guidance for Claude Code (and humans) working in this repository.
 
 ## What this is
 
-`youtube-to-mealie` is a CLI that turns a YouTube cooking video into a recipe in
-[Mealie](https://mealie.io): it pulls the auto-generated transcript with
-`yt-dlp`, has Claude extract a structured recipe, and creates it via the Mealie
-REST API (with the source URL and thumbnail).
+`juanita` (distribution `juanita-mealie`) is a CLI that imports recipes into
+[Mealie](https://mealie.io) from different sources — currently YouTube cooking
+videos (via `yt-dlp` transcripts) and local recipe text files. Claude extracts a
+structured recipe and it's created via the Mealie REST API, with foods/units
+linked and the source URL + thumbnail attached when available.
+
+The name is a nod to "Juanita", the unseen TV-cooking helper who does the prep
+and the dirty work — which is exactly this tool's job. Keep the source-agnostic
+framing when extending it; new input types (a webpage, a photo, …) should plug
+into the same source-record → extract → push pipeline.
 
 ## Layout
 
 ```
-src/youtube_to_mealie/
+src/juanita/
   __init__.py   # package version + public re-exports
-  __main__.py   # `python -m youtube_to_mealie`
+  __main__.py   # `python -m juanita`
   cli.py        # everything: fetch -> extract -> push, plus argparse main()
 pyproject.toml  # packaging (hatchling, src layout), console script, ruff config
 ```
 
-The console script `youtube-to-mealie` maps to `youtube_to_mealie.cli:main`.
+The console script `juanita` maps to `juanita.cli:main`.
 
 ## Pipeline (all in `cli.py`)
 
@@ -76,11 +82,11 @@ using `setdefault` so real environment variables always win:
 
 1. `--config FILE` / `-c FILE` (must exist, else `ap.error`).
 2. `./.env` in the current directory.
-3. `user_config_path()` — `$XDG_CONFIG_HOME/youtube-to-mealie/config.env`,
-   defaulting to `~/.config/youtube-to-mealie/config.env`.
+3. `user_config_path()` — `$XDG_CONFIG_HOME/juanita/config.env`,
+   defaulting to `~/.config/juanita/config.env`.
 
 All files share the same `KEY=VALUE` format (`load_dotenv`). The `init`
-subcommand (`youtube-to-mealie init`, handled in `main()` before argparse via
+subcommand (`juanita init`, handled in `main()` before argparse via
 `_init_command` → `init_config`) interactively prompts and writes the per-user
 config with mode `0600` (it holds secrets — `SECRET_KEYS` are read via
 `getpass`). `init` accepts `-c FILE` to write elsewhere.

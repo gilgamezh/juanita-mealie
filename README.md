@@ -1,11 +1,17 @@
-# youtube-to-mealie
+# Juanita
 
-Turn YouTube cooking videos — or your own plain-text recipe notes — into
-[Mealie](https://mealie.io) recipes. For videos it pulls the auto-generated
-transcript with [`yt-dlp`](https://github.com/yt-dlp/yt-dlp); for local files it
-just reads the text. Either way [Claude](https://www.anthropic.com/claude)
-extracts a structured recipe (in the source's own language) and creates it in
-Mealie via the API — including the source URL and thumbnail when available.
+**Juanita** imports recipes into [Mealie](https://mealie.io) from wherever they
+live. Point her at a YouTube cooking video or a local text file of notes and she
+does the prep: pulls the content (transcript via
+[`yt-dlp`](https://github.com/yt-dlp/yt-dlp), or just reads the file), has
+[Claude](https://www.anthropic.com/claude) extract a structured recipe in the
+source's own language, and creates it in Mealie via the API — ingredients linked
+to your foods database, with the source URL and thumbnail attached when available.
+
+> Named after the unseen TV-cooking helper who quietly did all the prep and
+> dirty work while the star took the spotlight. That's the job.
+
+The PyPI distribution is `juanita-mealie`; the command you run is `juanita`.
 
 ## Install & run
 
@@ -18,35 +24,35 @@ environment for you, installing the dependency on first run — no global instal
 no manual venv:
 
 ```bash
-fades -d youtube-to-mealie -x youtube-to-mealie -- https://youtu.be/VIDEO_ID
+fades -d juanita-mealie -x juanita -- https://youtu.be/VIDEO_ID
 ```
 
-`-d` declares the dependency and `-x` runs the installed `youtube-to-mealie`
-console script inside the managed venv. A handy alias keeps invocations short:
+`-d` declares the dependency and `-x` runs the installed `juanita` console
+script inside the managed venv. A handy alias keeps invocations short:
 
 ```bash
-alias yt2mealie='fades -d youtube-to-mealie -x youtube-to-mealie --'
-yt2mealie --dry-run https://youtu.be/VIDEO_ID
+alias juanita='fades -d juanita-mealie -x juanita --'
+juanita --dry-run https://youtu.be/VIDEO_ID
 ```
 
 ### With pip
 
 ```bash
-pip install youtube-to-mealie
-youtube-to-mealie https://youtu.be/VIDEO_ID
+pip install juanita-mealie
+juanita https://youtu.be/VIDEO_ID
 ```
 
 > Not yet on PyPI? Install straight from source by replacing the dependency name
-> with `git+https://github.com/gilgamezh/youtube-to-mealie` in any command above.
+> with `git+https://github.com/gilgamezh/juanita-mealie` in any command above.
 
 ## Configure
 
 The quickest way is the interactive setup, which writes a config file to your
-home directory (`~/.config/youtube-to-mealie/config.env`, mode `0600`):
+home directory (`~/.config/juanita/config.env`, mode `0600`):
 
 ```bash
-youtube-to-mealie init
-# with fades: fades -d youtube-to-mealie -x youtube-to-mealie -- init
+juanita init
+# with fades: fades -d juanita-mealie -x juanita -- init
 ```
 
 It prompts for your Anthropic API key, Mealie URL + token (optional — skip for
@@ -58,7 +64,7 @@ environment variables always override):
 
 1. `--config FILE` / `-c FILE` — an explicit config file.
 2. `./.env` in the current directory (see [`.env.example`](./.env.example)).
-3. `~/.config/youtube-to-mealie/config.env` — the per-user config.
+3. `~/.config/juanita/config.env` — the per-user config.
 
 | Variable | Required | Notes |
 |---|---|---|
@@ -70,34 +76,33 @@ environment variables always override):
 You can keep several profiles and pick one per run:
 
 ```bash
-youtube-to-mealie -c ~/configs/home-mealie.env https://youtu.be/VIDEO_ID
+juanita -c ~/configs/home-mealie.env https://youtu.be/VIDEO_ID
 ```
 
 ## Usage
 
-Examples use the bare `youtube-to-mealie` command (prefix with `fades -d
-youtube-to-mealie -x youtube-to-mealie --` or use the alias above if you didn't
-install it globally):
+Examples use the bare `juanita` command (prefix with `fades -d juanita-mealie -x
+juanita --` or use the alias above if you didn't install it globally):
 
 ```bash
 # One or more videos
-youtube-to-mealie https://youtu.be/wUewR4C0I_Y https://youtu.be/rzL07v6w8AA
+juanita https://youtu.be/wUewR4C0I_Y https://youtu.be/rzL07v6w8AA
 
 # A local recipe text file — any positional that's a file on disk is read as
 # recipe notes instead of fetched as a URL. Videos and files can be mixed.
-youtube-to-mealie grandmas-walnut-bread.txt https://youtu.be/VIDEO_ID
+juanita grandmas-walnut-bread.txt https://youtu.be/VIDEO_ID
 
 # Preview the parsed recipe without writing to Mealie (no Mealie token needed)
-youtube-to-mealie --dry-run https://youtu.be/UlafoXGyx6g
+juanita --dry-run https://youtu.be/UlafoXGyx6g
 
 # Batch from a file (one URL per line, # comments allowed)
-youtube-to-mealie --from-file urls.txt
+juanita --from-file urls.txt
 
 # Skip tag creation/attachment
-youtube-to-mealie --no-tags https://youtu.be/VIDEO_ID
+juanita --no-tags https://youtu.be/VIDEO_ID
 
 # Store ingredients as plain text instead of linking them to your foods DB
-youtube-to-mealie --not-linked-ingredients https://youtu.be/VIDEO_ID
+juanita --not-linked-ingredients https://youtu.be/VIDEO_ID
 ```
 
 Each source is handled independently — one failure doesn't stop the batch, and
@@ -114,13 +119,13 @@ no source URL or thumbnail, those Mealie fields are simply left unset.
 ### Caption rate limits (HTTP 429)
 
 YouTube sometimes rate-limits transcript (caption) downloads with `HTTP 429`.
-The tool retries with backoff, but a sustained 429 is best solved by passing
+Juanita retries with backoff, but a sustained 429 is best solved by passing
 browser cookies so the request is authenticated:
 
 ```bash
-youtube-to-mealie --cookies-from-browser firefox https://youtu.be/VIDEO_ID
+juanita --cookies-from-browser firefox https://youtu.be/VIDEO_ID
 # or a cookies.txt export:
-youtube-to-mealie --cookies cookies.txt https://youtu.be/VIDEO_ID
+juanita --cookies cookies.txt https://youtu.be/VIDEO_ID
 # or set YTDLP_COOKIES_FROM_BROWSER in your config
 ```
 
@@ -128,8 +133,9 @@ If you don't have cookies handy, waiting a few minutes usually clears it.
 
 ## How it works
 
-1. **yt-dlp** extracts the title, description, thumbnail, and auto-generated
-   transcript (no video download) — or, for a local file, the text is read as-is.
+1. Each input becomes a common source record. For a **URL**, `yt-dlp` extracts
+   the title, description, thumbnail, and auto-generated transcript (no video
+   download); for a **local file**, the text is read as-is.
 2. **Claude** turns the source into a structured recipe (name, description,
    yield, instructions, tags, and ingredients split into quantity/unit/food/note)
    via structured outputs, in the source's own language.
@@ -145,19 +151,20 @@ See [CLAUDE.md](./CLAUDE.md) for the detailed pipeline and design notes.
 ## Notes
 
 - Recipes are created **directly via the live Mealie API**. Re-running the same
-  video creates a duplicate (Mealie appends `-1`, `-2`, … to the slug).
-- The YouTube thumbnail is used as the recipe image. Mealie can't scrape recipes
-  straight from YouTube URLs, which is why this transcript→LLM route exists.
+  source creates a duplicate (Mealie appends `-1`, `-2`, … to the slug).
+- For videos, the YouTube thumbnail is used as the recipe image. Mealie can't
+  scrape recipes straight from YouTube URLs, which is why this transcript→LLM
+  route exists.
 
 ## Development
 
-Run the tool straight from your checkout with [fades](https://github.com/PyAr/fades)
+Run Juanita straight from your checkout with [fades](https://github.com/PyAr/fades)
 — `bin/run_dev` installs this project editable in a managed venv (your changes
 under `src/` are picked up on the next run) and forwards its arguments:
 
 ```bash
-git clone https://github.com/gilgamezh/youtube-to-mealie
-cd youtube-to-mealie
+git clone https://github.com/gilgamezh/juanita-mealie
+cd juanita-mealie
 bin/run_dev --dry-run https://youtu.be/VIDEO_ID
 bin/run_dev init
 ```

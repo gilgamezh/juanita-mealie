@@ -2,7 +2,7 @@
 """Turn YouTube cooking videos into Mealie recipes."""
 from __future__ import annotations
 
-from youtube_to_mealie.cli import (
+from juanita.cli import (
     Ingredient,
     Mealie,
     Recipe,

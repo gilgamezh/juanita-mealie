@@ -14,13 +14,13 @@ Configuration is read from a .env file in the current directory (see
 
 Usage:
     cp .env.example .env   # then fill in your keys
-    youtube-to-mealie https://youtu.be/wUewR4C0I_Y https://youtu.be/rzL07v6w8AA
+    juanita https://youtu.be/wUewR4C0I_Y https://youtu.be/rzL07v6w8AA
     # import a local recipe text file (any positional that is a file on disk):
-    youtube-to-mealie grandmas-walnut-bread.txt
+    juanita grandmas-walnut-bread.txt
     # or feed a file of URLs, one per line:
-    youtube-to-mealie --from-file urls.txt
+    juanita --from-file urls.txt
     # preview the parsed recipe without touching Mealie:
-    youtube-to-mealie --dry-run https://youtu.be/UlafoXGyx6g
+    juanita --dry-run https://youtu.be/UlafoXGyx6g
     # -v for full tracebacks, -q to only show warnings/errors
 """
 from __future__ import annotations
@@ -42,17 +42,17 @@ from yt_dlp import YoutubeDL
 
 MODEL = "claude-opus-4-8"
 
-log = logging.getLogger("yt2mealie")
+log = logging.getLogger("juanita")
 
 
 # ---- logging (fades style) --------------------------------------------------
 
-FMT_SIMPLE = "*** yt2mealie ***  %(asctime)s  %(levelname)-8s %(message)s"
-FMT_DETAILED = "*** yt2mealie ***  %(asctime)s  %(name)-18s %(levelname)-8s %(message)s"
+FMT_SIMPLE = "*** juanita ***  %(asctime)s  %(levelname)-8s %(message)s"
+FMT_DETAILED = "*** juanita ***  %(asctime)s  %(name)-18s %(levelname)-8s %(message)s"
 
 
 def set_up_logging(verbose: bool, quiet: bool) -> None:
-    """Configure the 'yt2mealie' logger, mimicking fades' format and levels."""
+    """Configure the 'juanita' logger, mimicking fades' format and levels."""
     log.setLevel(logging.DEBUG)
     if verbose:
         level, fmt = logging.DEBUG, FMT_DETAILED
@@ -75,10 +75,10 @@ SECRET_KEYS = ("ANTHROPIC_API_KEY", "MEALIE_TOKEN")
 def user_config_path() -> Path:
     """Default per-user config file, honoring XDG_CONFIG_HOME.
 
-    e.g. ~/.config/youtube-to-mealie/config.env
+    e.g. ~/.config/juanita/config.env
     """
     base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(Path.home(), ".config")
-    return Path(base) / "youtube-to-mealie" / "config.env"
+    return Path(base) / "juanita" / "config.env"
 
 
 def load_dotenv(path: Path) -> bool:
@@ -137,7 +137,7 @@ def _prompt(label: str, *, secret: bool, default: str | None = None) -> str:
 def init_config(path: Path | None) -> int:
     """Interactively create the config file, prompting for keys and secrets."""
     target = (Path(path).expanduser() if path else user_config_path())
-    print(f"Creating youtube-to-mealie config at:\n  {target}\n")
+    print(f"Creating juanita config at:\n  {target}\n")
     if target.exists():
         ans = input("File already exists. Overwrite? [y/N]: ").strip().lower()
         if ans not in ("y", "yes"):
@@ -155,8 +155,8 @@ def init_config(path: Path | None) -> int:
                       secret=False)
 
     lines = [
-        "# youtube-to-mealie config. Real environment variables override these.",
-        "# Regenerate with: youtube-to-mealie init",
+        "# juanita config. Real environment variables override these.",
+        "# Regenerate with: juanita init",
         "",
         f"ANTHROPIC_API_KEY={anthropic_key}",
     ]
@@ -170,7 +170,7 @@ def init_config(path: Path | None) -> int:
     target.write_text("\n".join(lines))
     target.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600 — it holds secrets
     print(f"\nWrote {target} (permissions 0600).")
-    print("You can now run, e.g.:\n  youtube-to-mealie https://youtu.be/VIDEO_ID")
+    print("You can now run, e.g.:\n  juanita https://youtu.be/VIDEO_ID")
     return 0
 
 
@@ -573,7 +573,7 @@ def push_to_mealie(mealie: Mealie, recipe: Recipe, source: dict, *,
 
 def _init_command(argv: list[str]) -> int:
     ip = argparse.ArgumentParser(
-        prog="youtube-to-mealie init",
+        prog="juanita init",
         description="Interactively create the config file (stored in your home by default).",
     )
     ip.add_argument("-c", "--config", metavar="FILE",
@@ -586,7 +586,7 @@ def _init_command(argv: list[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
-    # `youtube-to-mealie init [...]` creates the config file and exits.
+    # `juanita init [...]` creates the config file and exits.
     if argv and argv[0] == "init":
         return _init_command(argv[1:])
 
@@ -595,7 +595,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("urls", nargs="*", metavar="SOURCE",
                     help="YouTube URLs and/or paths to local recipe text files")
     ap.add_argument("-c", "--config", metavar="FILE",
-                    help="Path to a config file (KEY=VALUE). Run `youtube-to-mealie init` "
+                    help="Path to a config file (KEY=VALUE). Run `juanita init` "
                          "to create one. Defaults to ./.env then the per-user config.")
     ap.add_argument("--from-file", help="Read URLs from a file, one per line")
     ap.add_argument("--dry-run", action="store_true",
@@ -634,14 +634,14 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("no inputs given (pass YouTube URLs and/or local recipe text files)")
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        ap.error("ANTHROPIC_API_KEY is not set. Run `youtube-to-mealie init` to create a "
+        ap.error("ANTHROPIC_API_KEY is not set. Run `juanita init` to create a "
                  "config, or set it in the environment / a --config file.")
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
     mealie = None
     if not args.dry_run:
         base, token = os.environ.get("MEALIE_URL"), os.environ.get("MEALIE_TOKEN")
         if not base or not token:
-            ap.error("set MEALIE_URL and MEALIE_TOKEN (run `youtube-to-mealie init`, "
+            ap.error("set MEALIE_URL and MEALIE_TOKEN (run `juanita init`, "
                      "use a --config file, or pass --dry-run)")
         mealie = Mealie(base, token)
 

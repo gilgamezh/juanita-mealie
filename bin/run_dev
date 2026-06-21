@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run youtube-to-mealie from this checkout for development, using fades.
+# Run juanita from this checkout for development, using fades.
 #
 # fades creates/reuses a managed virtualenv and installs this project in
 # editable mode (`-e .`), so your local changes under src/ are picked up on the
@@ -29,4 +29,4 @@ if [[ "${FADES_REBUILD:-}" == "1" ]]; then
     pip_options="-e . --force-reinstall"
 fi
 
-exec fades -d requests --pip-options="$pip_options" -x youtube-to-mealie -- "$@"
+exec fades -d requests --pip-options="$pip_options" -x juanita -- "$@"
