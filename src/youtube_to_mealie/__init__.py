@@ -7,6 +7,7 @@ from youtube_to_mealie.cli import (
     Recipe,
     extract_recipe,
     fetch_video,
+    load_text_file,
     main,
     push_to_mealie,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "Recipe",
     "extract_recipe",
     "fetch_video",
+    "load_text_file",
     "main",
     "push_to_mealie",
     "__version__",

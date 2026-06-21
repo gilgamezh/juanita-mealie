@@ -1,9 +1,11 @@
 # youtube-to-mealie
 
-Turn YouTube cooking videos into [Mealie](https://mealie.io) recipes. It pulls
-the auto-generated transcript with [`yt-dlp`](https://github.com/yt-dlp/yt-dlp),
-has [Claude](https://www.anthropic.com/claude) extract a structured recipe, and
-creates it in Mealie via the API — including the source video URL and thumbnail.
+Turn YouTube cooking videos — or your own plain-text recipe notes — into
+[Mealie](https://mealie.io) recipes. For videos it pulls the auto-generated
+transcript with [`yt-dlp`](https://github.com/yt-dlp/yt-dlp); for local files it
+just reads the text. Either way [Claude](https://www.anthropic.com/claude)
+extracts a structured recipe (in the source's own language) and creates it in
+Mealie via the API — including the source URL and thumbnail when available.
 
 ## Install & run
 
@@ -81,6 +83,10 @@ install it globally):
 # One or more videos
 youtube-to-mealie https://youtu.be/wUewR4C0I_Y https://youtu.be/rzL07v6w8AA
 
+# A local recipe text file — any positional that's a file on disk is read as
+# recipe notes instead of fetched as a URL. Videos and files can be mixed.
+youtube-to-mealie grandmas-walnut-bread.txt https://youtu.be/VIDEO_ID
+
 # Preview the parsed recipe without writing to Mealie (no Mealie token needed)
 youtube-to-mealie --dry-run https://youtu.be/UlafoXGyx6g
 
@@ -91,9 +97,16 @@ youtube-to-mealie --from-file urls.txt
 youtube-to-mealie --no-tags https://youtu.be/VIDEO_ID
 ```
 
-Each video is handled independently — one failure doesn't stop the batch, and
-the exit code is non-zero if any video failed. Use `-v` for full tracebacks,
+Each source is handled independently — one failure doesn't stop the batch, and
+the exit code is non-zero if any source failed. Use `-v` for full tracebacks,
 `-q` to only show warnings and errors.
+
+### Local text files
+
+Pass a path to any text file containing a recipe (ingredients, steps — however
+roughly noted) and it's sent straight to Claude; no URL, transcript, or cookies
+involved. The recipe is written in the source's own language, and since there's
+no source URL or thumbnail, those Mealie fields are simply left unset.
 
 ### Caption rate limits (HTTP 429)
 

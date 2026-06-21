@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """
-Turn YouTube cooking videos into Mealie recipes.
+Turn YouTube cooking videos (or local recipe text files) into Mealie recipes.
 
-Pipeline per video:
+Pipeline per source:
   1. yt-dlp  -> title, description, thumbnail, auto-generated transcript
+     (or, for a local file, just read its text)
   2. Claude  -> structured recipe JSON (name, ingredients, steps, tags)
-  3. Mealie  -> create recipe, fill in details, attach the video URL + thumbnail
+  3. Mealie  -> create recipe, fill in details, attach the source URL + thumbnail
 
 Configuration is read from a .env file in the current directory (see
 .env.example), or from real environment variables, which take precedence:
@@ -14,6 +15,8 @@ Configuration is read from a .env file in the current directory (see
 Usage:
     cp .env.example .env   # then fill in your keys
     youtube-to-mealie https://youtu.be/wUewR4C0I_Y https://youtu.be/rzL07v6w8AA
+    # import a local recipe text file (any positional that is a file on disk):
+    youtube-to-mealie grandmas-walnut-bread.txt
     # or feed a file of URLs, one per line:
     youtube-to-mealie --from-file urls.txt
     # preview the parsed recipe without touching Mealie:
@@ -207,9 +210,31 @@ def fetch_video(url: str, *, cookies_from_browser: str | None = None,
     return {
         "title": info.get("title", ""),
         "description": info.get("description", "") or "",
-        "webpage_url": info.get("webpage_url", url),
+        "source_url": info.get("webpage_url", url),
         "thumbnail": info.get("thumbnail"),
-        "transcript": transcript,
+        "body": transcript,
+    }
+
+
+# ---- 1b. Local text files ---------------------------------------------------
+
+def load_text_file(path: str) -> dict:
+    """Read a local recipe text file into the same record shape as fetch_video.
+
+    The whole file is the body; the first non-blank line seeds the title (Claude
+    still produces the final recipe name). There's no source URL or thumbnail.
+    """
+    p = Path(path)
+    text = p.read_text(encoding="utf-8", errors="replace").strip()
+    if not text:
+        raise RuntimeError(f"file is empty: {path}")
+    title = next((ln.strip() for ln in text.splitlines() if ln.strip()), p.stem)
+    return {
+        "title": title,
+        "description": "",
+        "source_url": None,
+        "thumbnail": None,
+        "body": text,
     }
 
 
@@ -280,18 +305,21 @@ class Recipe(BaseModel):
     tags: list[str] = Field(description="3-6 lowercase kebab-case tags")
 
 
-def extract_recipe(client: anthropic.Anthropic, video: dict) -> Recipe:
-    transcript = video["transcript"] or "(no transcript available)"
+def extract_recipe(client: anthropic.Anthropic, source: dict) -> Recipe:
+    body = source["body"] or "(no source text available)"
+    description = source.get("description") or ""
     prompt = (
-        "You are extracting a clean, cookable recipe from a YouTube cooking video.\n"
-        "Use the transcript as the primary source; the title and description add context.\n"
-        "Infer reasonable quantities only when the video clearly implies them; otherwise "
-        "describe the ingredient without a fabricated amount. Do not invent steps.\n\n"
-        f"TITLE: {video['title']}\n\n"
-        f"DESCRIPTION:\n{video['description'][:4000]}\n\n"
-        f"TRANSCRIPT:\n{transcript[:120000]}"
+        "You are extracting a clean, cookable recipe from the source material below "
+        "(a cooking-video transcript or someone's written recipe notes).\n"
+        "Use the SOURCE as the primary content; the title and description add context.\n"
+        "Infer reasonable quantities only when the source clearly implies them; otherwise "
+        "describe the ingredient without a fabricated amount. Do not invent steps.\n"
+        "Write the recipe in the same language as the source.\n\n"
+        f"TITLE: {source['title']}\n\n"
+        f"DESCRIPTION:\n{description[:4000]}\n\n"
+        f"SOURCE:\n{body[:120000]}"
     )
-    log.info("calling Claude (%s, %d transcript chars)...", MODEL, len(transcript))
+    log.info("calling Claude (%s, %d source chars)...", MODEL, len(body))
     resp = client.messages.parse(
         model=MODEL,
         max_tokens=8000,
@@ -379,23 +407,24 @@ class Mealie:
         _check(r)
 
 
-def push_to_mealie(mealie: Mealie, recipe: Recipe, video: dict, *,
+def push_to_mealie(mealie: Mealie, recipe: Recipe, source: dict, *,
                    include_tags: bool = True) -> str:
     slug = mealie.create(recipe.name)
     log.debug("mealie: created recipe slug %s", slug)
     doc = mealie.get(slug)
 
-    source = video["webpage_url"]
+    source_url = source.get("source_url")
     description = recipe.description.strip()
-    if source not in description:
-        description = f"{description}\n\nSource: {source}".strip()
+    if source_url and source_url not in description:
+        description = f"{description}\n\nSource: {source_url}".strip()
 
     # NB: don't overwrite doc["name"] — Mealie already set it from create() and
     # may have de-duplicated it (e.g. "Foo (1)"). Re-setting the base name forces
     # a re-slug to an already-taken slug -> 400 "Recipe already exists".
     doc["description"] = description
     doc["recipeYield"] = recipe.recipe_yield
-    doc["orgURL"] = source
+    if source_url:
+        doc["orgURL"] = source_url
     doc["recipeIngredient"] = [{"note": i} for i in recipe.ingredients]
     doc["recipeInstructions"] = [{"text": s} for s in recipe.instructions]
     if include_tags and recipe.tags:
@@ -404,10 +433,10 @@ def push_to_mealie(mealie: Mealie, recipe: Recipe, video: dict, *,
 
     mealie.update(slug, doc)
 
-    if video.get("thumbnail"):
+    if source.get("thumbnail"):
         try:
-            mealie.set_image_from_url(slug, video["thumbnail"])
-            log.debug("mealie: set image from %s", video["thumbnail"])
+            mealie.set_image_from_url(slug, source["thumbnail"])
+            log.debug("mealie: set image from %s", source["thumbnail"])
         except Exception as e:  # noqa: BLE001 - image is best-effort
             log.warning("could not set image for %s: %s", slug, e)
 
@@ -435,8 +464,10 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "init":
         return _init_command(argv[1:])
 
-    ap = argparse.ArgumentParser(description="Import YouTube cooking videos into Mealie.")
-    ap.add_argument("urls", nargs="*", help="YouTube URLs")
+    ap = argparse.ArgumentParser(
+        description="Import recipes into Mealie from YouTube videos or local text files.")
+    ap.add_argument("urls", nargs="*", metavar="SOURCE",
+                    help="YouTube URLs and/or paths to local recipe text files")
     ap.add_argument("-c", "--config", metavar="FILE",
                     help="Path to a config file (KEY=VALUE). Run `youtube-to-mealie init` "
                          "to create one. Defaults to ./.env then the per-user config.")
@@ -466,12 +497,12 @@ def main(argv: list[str] | None = None) -> int:
     # Cookies: CLI flag wins, else YTDLP_COOKIES_FROM_BROWSER from env/.env.
     cookies_from_browser = args.cookies_from_browser or os.environ.get("YTDLP_COOKIES_FROM_BROWSER")
 
-    urls = list(args.urls)
+    sources = list(args.urls)
     if args.from_file:
         with open(args.from_file) as f:
-            urls += [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
-    if not urls:
-        ap.error("no URLs given")
+            sources += [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
+    if not sources:
+        ap.error("no inputs given (pass YouTube URLs and/or local recipe text files)")
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         ap.error("ANTHROPIC_API_KEY is not set. Run `youtube-to-mealie init` to create a "
@@ -486,13 +517,17 @@ def main(argv: list[str] | None = None) -> int:
         mealie = Mealie(base, token)
 
     failures = 0
-    for url in urls:
+    for item in sources:
         try:
-            log.info("processing %s", url)
-            video = fetch_video(url, cookies_from_browser=cookies_from_browser,
-                                cookies_file=args.cookies)
-            log.info("video: %r (transcript: %d chars)", video["title"], len(video["transcript"]))
-            recipe = extract_recipe(client, video)
+            log.info("processing %s", item)
+            # A local recipe text file vs. a URL to fetch with yt-dlp.
+            if os.path.isfile(item):
+                source = load_text_file(item)
+            else:
+                source = fetch_video(item, cookies_from_browser=cookies_from_browser,
+                                     cookies_file=args.cookies)
+            log.info("source: %r (%d chars)", source["title"], len(source["body"]))
+            recipe = extract_recipe(client, source)
             log.info(
                 "recipe: %r (%d ingredients, %d steps)",
                 recipe.name, len(recipe.ingredients), len(recipe.instructions),
@@ -500,15 +535,15 @@ def main(argv: list[str] | None = None) -> int:
             if args.dry_run:
                 print(json.dumps(recipe.model_dump(), indent=2, ensure_ascii=False))
                 continue
-            slug = push_to_mealie(mealie, recipe, video, include_tags=not args.no_tags)
+            slug = push_to_mealie(mealie, recipe, source, include_tags=not args.no_tags)
             log.info("imported -> %s/g/home/r/%s", mealie.base, slug)
         except Exception as e:  # noqa: BLE001 - keep going through the batch
             failures += 1
-            log.error("failed on %s: %s", url, e)
+            log.error("failed on %s: %s", item, e)
             log.debug("traceback", exc_info=True)
 
     if failures:
-        log.warning("%d of %d failed", failures, len(urls))
+        log.warning("%d of %d failed", failures, len(sources))
     return 1 if failures else 0
 
 
