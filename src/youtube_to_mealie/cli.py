@@ -504,10 +504,16 @@ def _ingredient_original_text(ing: Ingredient) -> str:
     return text
 
 
-def _build_recipe_ingredient(mealie: Mealie, ing: Ingredient) -> dict:
-    """Turn an extracted Ingredient into a Mealie recipeIngredient object,
-    linking food and unit to the database. Food/unit linking is best-effort:
-    if Mealie rejects one, fall back to an unlinked (but still amounted) line."""
+def _build_recipe_ingredient(mealie: Mealie, ing: Ingredient, *, link: bool = True) -> dict:
+    """Turn an extracted Ingredient into a Mealie recipeIngredient object.
+
+    With `link` (the default), food and unit are resolved to real database
+    objects (best-effort: if Mealie rejects one, fall back to an unlinked but
+    still-amounted line). Without it, the ingredient is stored as a single
+    plain-text line, touching nothing in the Mealie database.
+    """
+    if not link:
+        return {"note": _ingredient_original_text(ing)}
     food = unit = None
     try:
         food = mealie.resolve_food(ing.food)
@@ -524,7 +530,7 @@ def _build_recipe_ingredient(mealie: Mealie, ing: Ingredient) -> dict:
 
 
 def push_to_mealie(mealie: Mealie, recipe: Recipe, source: dict, *,
-                   include_tags: bool = True) -> str:
+                   include_tags: bool = True, link_ingredients: bool = True) -> str:
     slug = mealie.create(recipe.name)
     log.debug("mealie: created recipe slug %s", slug)
     doc = mealie.get(slug)
@@ -541,8 +547,11 @@ def push_to_mealie(mealie: Mealie, recipe: Recipe, source: dict, *,
     doc["recipeYield"] = recipe.recipe_yield
     if source_url:
         doc["orgURL"] = source_url
-    doc["recipeIngredient"] = [_build_recipe_ingredient(mealie, i) for i in recipe.ingredients]
-    log.debug("mealie: linked %d ingredients to foods/units", len(recipe.ingredients))
+    doc["recipeIngredient"] = [
+        _build_recipe_ingredient(mealie, i, link=link_ingredients) for i in recipe.ingredients
+    ]
+    log.debug("mealie: %s %d ingredients",
+              "linked" if link_ingredients else "added (unlinked)", len(recipe.ingredients))
     doc["recipeInstructions"] = [{"text": s} for s in recipe.instructions]
     if include_tags and recipe.tags:
         doc["tags"] = [mealie.resolve_tag(t) for t in recipe.tags]
@@ -592,6 +601,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="Print the parsed recipe, don't push to Mealie")
     ap.add_argument("--no-tags", action="store_true", help="Don't attach tags to recipes")
+    ap.add_argument("--not-linked-ingredients", action="store_true",
+                    help="Store ingredients as plain-text lines instead of linking each "
+                         "food/unit to the Mealie database (creates nothing in it)")
     ap.add_argument("--cookies-from-browser", metavar="BROWSER",
                     help="Load YouTube cookies from a browser (firefox, chrome, ...) "
                          "to avoid caption-download rate limits (HTTP 429)")
@@ -652,7 +664,11 @@ def main(argv: list[str] | None = None) -> int:
             if args.dry_run:
                 print(json.dumps(recipe.model_dump(), indent=2, ensure_ascii=False))
                 continue
-            slug = push_to_mealie(mealie, recipe, source, include_tags=not args.no_tags)
+            slug = push_to_mealie(
+                mealie, recipe, source,
+                include_tags=not args.no_tags,
+                link_ingredients=not args.not_linked_ingredients,
+            )
             log.info("imported -> %s/g/home/r/%s", mealie.base, slug)
         except Exception as e:  # noqa: BLE001 - keep going through the batch
             failures += 1

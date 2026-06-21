@@ -95,6 +95,9 @@ youtube-to-mealie --from-file urls.txt
 
 # Skip tag creation/attachment
 youtube-to-mealie --no-tags https://youtu.be/VIDEO_ID
+
+# Store ingredients as plain text instead of linking them to your foods DB
+youtube-to-mealie --not-linked-ingredients https://youtu.be/VIDEO_ID
 ```
 
 Each source is handled independently — one failure doesn't stop the batch, and
@@ -133,8 +136,9 @@ If you don't have cookies handy, waiting a few minutes usually clears it.
 3. **Mealie** gets a new recipe created and filled in via its REST API. Each
    ingredient's **food and unit are linked to your Mealie database** (looked up,
    or created if new), so amounts parse and ingredients aggregate in shopping
-   lists instead of being plain text. The source URL is set as `orgURL` and the
-   thumbnail as the image, when available.
+   lists instead of being plain text — pass `--not-linked-ingredients` to keep
+   them as plain text and leave your database untouched. The source URL is set as
+   `orgURL` and the thumbnail as the image, when available.
 
 See [CLAUDE.md](./CLAUDE.md) for the detailed pipeline and design notes.
 

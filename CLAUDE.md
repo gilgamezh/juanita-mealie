@@ -60,6 +60,8 @@ otherwise → `fetch_video` (a URL).
      `resolve_unit` (search-or-create against `/api/foods` and `/api/units`,
      cached; units are matched on name/abbreviation/alias). Linking is
      best-effort — a failure falls back to an unlinked but still-amounted line.
+     `--not-linked-ingredients` (`link_ingredients=False`) stores each ingredient
+     as a single plain-text line and touches nothing in the database.
      Map instructions to `[{text}]`, resolve tags to full organizer-tag objects.
      When the record has a `source_url`, set `orgURL` and append `Source: <url>`
      to the description; both are skipped for local files (no URL).
