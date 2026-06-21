@@ -90,11 +90,18 @@ Settings:
 
 ## Dev workflow
 
+Use [fades](https://github.com/PyAr/fades) — `bin/run_dev` installs this project
+editable in a managed venv and forwards its args, so `src/` edits are picked up
+on the next run:
+
 ```bash
-uv pip install -e ".[dev]"   # or: pip install -e ".[dev]"
-ruff check src               # lint
-youtube-to-mealie --dry-run https://youtu.be/VIDEO_ID   # no Mealie creds needed
+bin/run_dev --dry-run https://youtu.be/VIDEO_ID   # no Mealie creds needed
+fades -d ruff -x ruff -- check src                # lint
 ```
+
+`bin/run_dev` declares `-d requests` only to trigger fades' install step and
+passes `--pip-options="-e ."`; `FADES_REBUILD=1 bin/run_dev ...` forces a fresh
+venv after adding a dependency to `pyproject.toml`.
 
 There is no test suite yet; `--dry-run` is the quickest end-to-end smoke check
 (it exercises fetch + extract without writing to Mealie).

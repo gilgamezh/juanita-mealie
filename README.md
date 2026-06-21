@@ -27,10 +27,10 @@ alias yt2mealie='fades -d youtube-to-mealie -x youtube-to-mealie --'
 yt2mealie --dry-run https://youtu.be/VIDEO_ID
 ```
 
-### With pip / uv
+### With pip
 
 ```bash
-pip install youtube-to-mealie        # or: uv tool install youtube-to-mealie
+pip install youtube-to-mealie
 youtube-to-mealie https://youtu.be/VIDEO_ID
 ```
 
@@ -130,11 +130,24 @@ See [CLAUDE.md](./CLAUDE.md) for the detailed pipeline and design notes.
 
 ## Development
 
+Run the tool straight from your checkout with [fades](https://github.com/PyAr/fades)
+— `bin/run_dev` installs this project editable in a managed venv (your changes
+under `src/` are picked up on the next run) and forwards its arguments:
+
 ```bash
 git clone https://github.com/gilgamezh/youtube-to-mealie
 cd youtube-to-mealie
-uv pip install -e ".[dev]"   # or: pip install -e ".[dev]"
-ruff check src
+bin/run_dev --dry-run https://youtu.be/VIDEO_ID
+bin/run_dev init
+```
+
+Added a new dependency to `pyproject.toml`? Rebuild the venv with
+`FADES_REBUILD=1 bin/run_dev ...`.
+
+Lint with ruff:
+
+```bash
+fades -d ruff -x ruff -- check src
 ```
 
 ## License
