@@ -94,7 +94,16 @@ def load_dotenv(path: Path) -> bool:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        key, value = key.strip(), value.strip().strip('"').strip("'")
+        key, value = key.strip(), value.strip()
+        if value[:1] in ("'", '"'):
+            # Quoted value: take everything up to the matching closing quote and
+            # ignore the rest (e.g. a trailing inline comment).
+            quote = value[0]
+            end = value.find(quote, 1)
+            value = value[1:end] if end != -1 else value[1:]
+        else:
+            # Unquoted value: drop a trailing ' # inline comment', if any.
+            value = value.split(" #", 1)[0].rstrip()
         os.environ.setdefault(key, value)
     return True
 
@@ -244,12 +253,14 @@ def _extract_transcript(ydl: YoutubeDL, info: dict) -> str:
     auto = info.get("automatic_captions") or {}
     for lang in ("en", "en-US", "en-orig"):
         for source in (tracks, auto):
-            if lang in source:
-                fmt = next(
-                    (f for f in source[lang] if f.get("ext") == "json3"),
-                    source[lang][0],
-                )
-                return _download_caption(ydl, fmt["url"], fmt.get("ext"))
+            formats = source.get(lang)
+            if not formats:  # missing or an empty list for this language
+                continue
+            fmt = next(
+                (f for f in formats if f.get("ext") == "json3"),
+                formats[0],
+            )
+            return _download_caption(ydl, fmt["url"], fmt.get("ext"))
     log.warning("no English captions found; proceeding without a transcript")
     return ""
 
@@ -262,7 +273,10 @@ def _download_caption(ydl: YoutubeDL, url: str, ext: str | None, attempts: int =
             raw = ydl.urlopen(url).read().decode("utf-8", "replace")
             break
         except Exception as e:  # noqa: BLE001 - retry only on rate-limit
-            if "429" not in str(e):
+            # Prefer a structured HTTP status (yt-dlp/urllib expose .status or
+            # .code); fall back to a substring match for wrapped errors.
+            status = getattr(e, "status", None) or getattr(e, "code", None)
+            if status != 429 and "429" not in str(e):
                 raise
             if attempt < attempts:
                 log.warning("caption fetch rate-limited (429); retry %d/%d in %ds",
@@ -377,6 +391,25 @@ class Mealie:
         self._food_cache: dict[str, dict] = {}
         self._unit_cache: dict[str, dict] = {}
         self._units_loaded = False
+        self._group_slug: str | None = None
+        self._group_slug_loaded = False
+
+    def group_slug(self) -> str | None:
+        """The current user's group slug, used to build recipe page URLs.
+
+        Mealie recipe pages live at /g/{group}/r/{slug}; the group varies per
+        instance/user, so resolve it once (best-effort) rather than assuming
+        the default 'home'.
+        """
+        if not self._group_slug_loaded:
+            try:
+                self._group_slug = _check(
+                    self.s.get(f"{self.base}/api/groups/self", timeout=30)
+                ).json().get("slug")
+            except Exception as e:  # noqa: BLE001 - URL building is best-effort
+                log.debug("could not resolve group slug for the recipe URL: %s", e)
+            self._group_slug_loaded = True
+        return self._group_slug
 
     def create(self, name: str) -> str:
         r = self.s.post(f"{self.base}/api/recipes", json={"name": name}, timeout=30)
@@ -628,8 +661,11 @@ def main(argv: list[str] | None = None) -> int:
 
     sources = list(args.urls)
     if args.from_file:
-        with open(args.from_file) as f:
-            sources += [s for ln in f if (s := ln.strip()) and not s.startswith("#")]
+        try:
+            with open(args.from_file) as f:
+                sources += [s for ln in f if (s := ln.strip()) and not s.startswith("#")]
+        except OSError as e:
+            ap.error(f"could not read --from-file {args.from_file}: {e}")
     if not sources:
         ap.error("no inputs given (pass YouTube URLs and/or local recipe text files)")
 
@@ -669,7 +705,11 @@ def main(argv: list[str] | None = None) -> int:
                 include_tags=not args.no_tags,
                 link_ingredients=not args.not_linked_ingredients,
             )
-            log.info("imported -> %s/g/home/r/%s", mealie.base, slug)
+            group = mealie.group_slug()
+            if group:
+                log.info("imported -> %s/g/%s/r/%s", mealie.base, group, slug)
+            else:
+                log.info("imported -> %s (recipe slug: %s)", mealie.base, slug)
         except Exception as e:  # noqa: BLE001 - keep going through the batch
             failures += 1
             log.error("failed on %s: %s", item, e)

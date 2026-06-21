@@ -100,3 +100,22 @@ def test_extract_transcript_picks_json3_from_automatic_captions():
 
 def test_extract_transcript_no_captions_returns_empty():
     assert cli._extract_transcript(FakeYDL(), {}) == ""
+
+
+def test_extract_transcript_empty_format_list_is_skipped():
+    # A present language key with an empty format list must not IndexError; it
+    # should fall through to the next source/language (here: none -> empty).
+    info = {"subtitles": {"en": []}, "automatic_captions": {"en": []}}
+    assert cli._extract_transcript(FakeYDL(), info) == ""
+
+
+def test_download_caption_429_via_status_attribute(monkeypatch):
+    monkeypatch.setattr(cli.time, "sleep", lambda _s: None)
+
+    class HTTP429(Exception):
+        status = 429  # structured status, message has no "429"
+
+    ydl = FakeYDL(exc=HTTP429("rate limited"))
+    with pytest.raises(RuntimeError, match="429"):
+        cli._download_caption(ydl, "http://x", "json3", attempts=2)
+    assert ydl.calls == 2
