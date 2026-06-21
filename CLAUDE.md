@@ -44,6 +44,8 @@ otherwise → `fetch_video` (a URL).
    `effort: high`) turns `body` + title + description into a validated `Recipe`
    via `messages.parse()` with a Pydantic schema (structured outputs): `name`,
    `description`, `recipe_yield`, `ingredients[]`, `instructions[]`, `tags[]`.
+   Each ingredient is a structured `Ingredient` (`quantity`, `unit`, `food`,
+   `note`), not a free-text line, so it can be linked to Mealie's database.
    The prompt is source-agnostic (transcript or written notes), forbids inventing
    steps or fabricating quantities, and asks for the recipe in the source's
    language. We deliberately do **not** mention Mealie or pass an example: the
@@ -52,10 +54,15 @@ otherwise → `fetch_video` (a URL).
 3. **Push** (`push_to_mealie`) — against the Mealie REST API:
    - `POST /api/recipes` `{name}` → returns the new slug.
    - `GET /api/recipes/{slug}` → full recipe document.
-   - Merge: set description/yield, map ingredients to `[{note}]` and instructions
-     to `[{text}]`, resolve tags to full organizer-tag objects. When the record
-     has a `source_url`, set `orgURL` and append `Source: <url>` to the
-     description; both are skipped for local files (no URL).
+   - Merge: set description/yield; build each `recipeIngredient` from an
+     `Ingredient` (`_build_recipe_ingredient`) with `quantity`, `note`,
+     `originalText`, and **linked** `food`/`unit` objects via `resolve_food` /
+     `resolve_unit` (search-or-create against `/api/foods` and `/api/units`,
+     cached; units are matched on name/abbreviation/alias). Linking is
+     best-effort — a failure falls back to an unlinked but still-amounted line.
+     Map instructions to `[{text}]`, resolve tags to full organizer-tag objects.
+     When the record has a `source_url`, set `orgURL` and append `Source: <url>`
+     to the description; both are skipped for local files (no URL).
    - `PUT /api/recipes/{slug}` with the merged document.
    - `POST /api/recipes/{slug}/image` `{url: thumbnail}` to set the image, only
      when a `thumbnail` is present (failure here is non-fatal — logged/skipped).
@@ -89,8 +96,12 @@ Settings:
   `.env.example` placeholder-only.
 - `src/` layout, packaged with hatchling. Keep the public API re-exported from
   `__init__.py` in sync when adding top-level functions.
-- `Recipe`'s Pydantic schema must use only structured-output-safe constructs
-  (plain strings and string arrays — no min/max length constraints).
+- `Recipe`'s Pydantic schema must use only structured-output-safe constructs:
+  strings, string arrays, nullable numbers, and nested models (e.g. `Ingredient`)
+  are fine; avoid min/max length and other value constraints.
+- Food/unit linking creates entries in the user's Mealie database when no match
+  exists. Matching is case-insensitive exact (name/plural/abbreviation/alias) to
+  reuse existing foods/units rather than spawning near-duplicates.
 - Idempotency is **not** handled — re-importing a video creates a duplicate
   (Mealie appends `-1`, `-2`, … to the slug).
 - When updating a recipe, don't overwrite `doc["name"]`: Mealie set it on

@@ -295,12 +295,29 @@ def _download_caption(ydl: YoutubeDL, url: str, ext: str | None, attempts: int =
 
 # ---- 2. Claude --------------------------------------------------------------
 
+class Ingredient(BaseModel):
+    quantity: float | None = Field(
+        description="Numeric amount as a decimal (e.g. 365, 1, 0.5), or null when "
+                    "there's no amount or it's 'to taste'. For a range like '2 or 3', "
+                    "use the lower number (2) and add only the extra ('or 3') to note.")
+    unit: str = Field(
+        description="Unit of measure as written, singular, e.g. 'g', 'taza', 'cda', "
+                    "'cup'. Empty string when there is no unit.")
+    food: str = Field(
+        description="The core ingredient itself, without quantity or unit, e.g. "
+                    "'harina leudante', 'azúcar', 'walnuts'. Singular where natural.")
+    note: str = Field(
+        description="Only the extra qualifier, e.g. 'a gusto', 'finely chopped', "
+                    "'or 3', 'room temperature'. Never repeat the quantity, unit, or "
+                    "food here. Empty string when there is none.")
+
+
 class Recipe(BaseModel):
     name: str = Field(description="Short recipe title, e.g. 'Creamy Sesame Ginger Dressing'")
     description: str = Field(description="One or two appetizing sentences. No URLs.")
     recipe_yield: str = Field(description="Yield/servings, e.g. '4 servings' or '1 jar'")
-    ingredients: list[str] = Field(
-        description="Each ingredient as one line, with quantity if stated")
+    ingredients: list[Ingredient] = Field(
+        description="Each ingredient split into quantity, unit, food, and note")
     instructions: list[str] = Field(description="Ordered steps, one per item")
     tags: list[str] = Field(description="3-6 lowercase kebab-case tags")
 
@@ -357,6 +374,9 @@ class Mealie:
         self.s = requests.Session()
         self.s.headers["Authorization"] = f"Bearer {token}"
         self._tag_cache: dict[str, dict] = {}
+        self._food_cache: dict[str, dict] = {}
+        self._unit_cache: dict[str, dict] = {}
+        self._units_loaded = False
 
     def create(self, name: str) -> str:
         r = self.s.post(f"{self.base}/api/recipes", json={"name": name}, timeout=30)
@@ -398,6 +418,67 @@ class Mealie:
         self._tag_cache[key] = tag
         return tag
 
+    def resolve_food(self, name: str) -> dict | None:
+        """Return a Mealie food object for `name`, reusing an existing one
+        (matched case-insensitively on name/plural/alias) or creating it.
+
+        Linking ingredients to real foods is what makes them aggregate in
+        shopping lists and show up in the foods database, instead of being just
+        free text.
+        """
+        key = name.strip().lower()
+        if not key:
+            return None
+        if key in self._food_cache:
+            return self._food_cache[key]
+        found = _check(self.s.get(
+            f"{self.base}/api/foods", params={"search": name, "perPage": 50}, timeout=30,
+        )).json()
+        food = next((f for f in found.get("items", []) if self._food_matches(f, key)), None)
+        if food is None:
+            food = _check(self.s.post(
+                f"{self.base}/api/foods", json={"name": name}, timeout=30,
+            )).json()
+        self._food_cache[key] = food
+        return food
+
+    @staticmethod
+    def _food_matches(f: dict, key: str) -> bool:
+        names = [f.get("name"), f.get("pluralName")]
+        names += [a.get("name") for a in (f.get("aliases") or [])]
+        return any(n and n.strip().lower() == key for n in names)
+
+    def resolve_unit(self, name: str) -> dict | None:
+        """Return a Mealie unit object for `name`, reusing an existing one
+        (matched on name/plural/abbreviation/alias) or creating it."""
+        key = name.strip().lower()
+        if not key:
+            return None
+        self._ensure_units_loaded()
+        if key in self._unit_cache:
+            return self._unit_cache[key]
+        unit = _check(self.s.post(
+            f"{self.base}/api/units", json={"name": name}, timeout=30,
+        )).json()
+        self._unit_cache[key] = unit
+        return unit
+
+    def _ensure_units_loaded(self) -> None:
+        """Index every existing unit by its names/abbreviations (there are few)."""
+        if self._units_loaded:
+            return
+        items = _check(self.s.get(
+            f"{self.base}/api/units", params={"perPage": 1000}, timeout=30,
+        )).json().get("items", [])
+        for u in items:
+            keys = [u.get("name"), u.get("pluralName"),
+                    u.get("abbreviation"), u.get("pluralAbbreviation")]
+            keys += [a.get("name") for a in (u.get("aliases") or [])]
+            for k in keys:
+                if k and k.strip():
+                    self._unit_cache.setdefault(k.strip().lower(), u)
+        self._units_loaded = True
+
     def set_image_from_url(self, slug: str, image_url: str) -> None:
         r = self.s.post(
             f"{self.base}/api/recipes/{slug}/image",
@@ -405,6 +486,41 @@ class Mealie:
             timeout=60,
         )
         _check(r)
+
+
+def _format_quantity(quantity: float | None) -> str:
+    """Render a quantity without a trailing '.0' (365.0 -> '365', 0.5 -> '0.5')."""
+    if quantity is None:
+        return ""
+    return str(int(quantity)) if float(quantity).is_integer() else str(quantity)
+
+
+def _ingredient_original_text(ing: Ingredient) -> str:
+    """Human-readable line, used as Mealie's originalText / display fallback."""
+    parts = [p for p in (_format_quantity(ing.quantity), ing.unit, ing.food) if p]
+    text = " ".join(parts)
+    if ing.note:
+        text = f"{text} ({ing.note})" if text else ing.note
+    return text
+
+
+def _build_recipe_ingredient(mealie: Mealie, ing: Ingredient) -> dict:
+    """Turn an extracted Ingredient into a Mealie recipeIngredient object,
+    linking food and unit to the database. Food/unit linking is best-effort:
+    if Mealie rejects one, fall back to an unlinked (but still amounted) line."""
+    food = unit = None
+    try:
+        food = mealie.resolve_food(ing.food)
+        unit = mealie.resolve_unit(ing.unit)
+    except Exception as e:  # noqa: BLE001 - never let one ingredient sink the import
+        log.warning("could not link food/unit for %r: %s", ing.food or ing.note, e)
+    return {
+        "quantity": ing.quantity,
+        "unit": unit,
+        "food": food,
+        "note": ing.note or "",
+        "originalText": _ingredient_original_text(ing),
+    }
 
 
 def push_to_mealie(mealie: Mealie, recipe: Recipe, source: dict, *,
@@ -425,7 +541,8 @@ def push_to_mealie(mealie: Mealie, recipe: Recipe, source: dict, *,
     doc["recipeYield"] = recipe.recipe_yield
     if source_url:
         doc["orgURL"] = source_url
-    doc["recipeIngredient"] = [{"note": i} for i in recipe.ingredients]
+    doc["recipeIngredient"] = [_build_recipe_ingredient(mealie, i) for i in recipe.ingredients]
+    log.debug("mealie: linked %d ingredients to foods/units", len(recipe.ingredients))
     doc["recipeInstructions"] = [{"text": s} for s in recipe.instructions]
     if include_tags and recipe.tags:
         doc["tags"] = [mealie.resolve_tag(t) for t in recipe.tags]

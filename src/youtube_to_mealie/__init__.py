@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from youtube_to_mealie.cli import (
+    Ingredient,
     Mealie,
     Recipe,
     extract_recipe,
@@ -15,6 +16,7 @@ from youtube_to_mealie.cli import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "Ingredient",
     "Mealie",
     "Recipe",
     "extract_recipe",

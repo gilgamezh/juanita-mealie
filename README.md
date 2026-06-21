@@ -126,11 +126,15 @@ If you don't have cookies handy, waiting a few minutes usually clears it.
 ## How it works
 
 1. **yt-dlp** extracts the title, description, thumbnail, and auto-generated
-   transcript (no video download).
-2. **Claude** turns the transcript into a structured recipe (name, description,
-   yield, ingredients, instructions, tags) via structured outputs.
-3. **Mealie** gets a new recipe created and filled in via its REST API, with the
-   source URL set as `orgURL` and the YouTube thumbnail as the image.
+   transcript (no video download) — or, for a local file, the text is read as-is.
+2. **Claude** turns the source into a structured recipe (name, description,
+   yield, instructions, tags, and ingredients split into quantity/unit/food/note)
+   via structured outputs, in the source's own language.
+3. **Mealie** gets a new recipe created and filled in via its REST API. Each
+   ingredient's **food and unit are linked to your Mealie database** (looked up,
+   or created if new), so amounts parse and ingredients aggregate in shopping
+   lists instead of being plain text. The source URL is set as `orgURL` and the
+   thumbnail as the image, when available.
 
 See [CLAUDE.md](./CLAUDE.md) for the detailed pipeline and design notes.
 
