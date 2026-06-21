@@ -1,0 +1,24 @@
+# Local secrets
+.env
+**/.env
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Local URL batches
+urls.txt
