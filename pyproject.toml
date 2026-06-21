@@ -39,11 +39,16 @@ juanita = "juanita.cli:main"
 
 [project.optional-dependencies]
 dev = [
+    "pytest>=8",
     "ruff>=0.6",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/juanita"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
 
 [tool.ruff]
 line-length = 100
