@@ -128,12 +128,16 @@ on the next run:
 
 ```bash
 bin/run_dev --dry-run https://youtu.be/VIDEO_ID   # no Mealie creds needed
-fades -d ruff -x ruff -- check src                # lint
+bin/run_tests                                     # run the test suite (pytest)
+fades -d ruff -x ruff -- check src tests          # lint
 ```
 
 `bin/run_dev` declares `-d requests` only to trigger fades' install step and
 passes `--pip-options="-e ."`; `FADES_REBUILD=1 bin/run_dev ...` forces a fresh
-venv after adding a dependency to `pyproject.toml`.
+venv after adding a dependency to `pyproject.toml`. `bin/run_tests` works the
+same way (`-d pytest`, `-e .`) and forwards its args to pytest, e.g.
+`bin/run_tests -k linking`.
 
-There is no test suite yet; `--dry-run` is the quickest end-to-end smoke check
-(it exercises fetch + extract without writing to Mealie).
+The `tests/` suite is fully offline (no network, no real Anthropic/Mealie
+calls); CI runs ruff + pytest on every push/PR. `--dry-run` remains the quickest
+end-to-end smoke check (it exercises fetch + extract without writing to Mealie).

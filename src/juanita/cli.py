@@ -178,7 +178,7 @@ def init_config(path: Path | None) -> int:
 
 def fetch_video(url: str, *, cookies_from_browser: str | None = None,
                 cookies_file: str | None = None) -> dict:
-    """Return {title, description, webpage_url, thumbnail, transcript}.
+    """Return a source record {title, description, source_url, thumbnail, body}.
 
     Passing browser cookies makes YouTube far less likely to 429 the caption
     download (authenticated requests are throttled much less aggressively).
@@ -629,7 +629,7 @@ def main(argv: list[str] | None = None) -> int:
     sources = list(args.urls)
     if args.from_file:
         with open(args.from_file) as f:
-            sources += [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
+            sources += [s for ln in f if (s := ln.strip()) and not s.startswith("#")]
     if not sources:
         ap.error("no inputs given (pass YouTube URLs and/or local recipe text files)")
 
