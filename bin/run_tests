@@ -28,4 +28,4 @@ if [[ "${FADES_REBUILD:-}" == "1" ]]; then
     pip_options="-e . --force-reinstall"
 fi
 
-exec fades -d pytest --pip-options="$pip_options" -x pytest -- "$@"
+exec fades -d pytest --pip-options="$pip_options" -x pytest -v -- "$@"
