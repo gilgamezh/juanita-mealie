@@ -187,6 +187,11 @@ def fetch_video(url: str, *, cookies_from_browser: str | None = None,
         "subtitleslangs": ["en", "en-US", "en-orig"],
         "quiet": True,
         "no_warnings": True,
+        # We only want metadata + captions, never the media. Without this,
+        # extract_info still tries to *select* a playable format and raises
+        # "Requested format is not available" for videos whose formats yt-dlp
+        # can't enumerate (live/upcoming, DRM, login-walled, etc.).
+        "ignore_no_formats_error": True,
     }
     if cookies_from_browser:
         opts["cookiesfrombrowser"] = (cookies_from_browser,)
