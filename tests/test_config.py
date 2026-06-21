@@ -11,9 +11,8 @@ from juanita import cli
 
 
 def test_load_dotenv_parses_comments_quotes_and_blanks(tmp_path, monkeypatch):
-    monkeypatch.delenv("FOO", raising=False)
-    monkeypatch.delenv("BAR", raising=False)
-    monkeypatch.delenv("BAZ", raising=False)
+    for key in ("FOO", "BAR", "BAZ", "QUX", "QUUX"):
+        monkeypatch.delenv(key, raising=False)
     env = tmp_path / ".env"
     env.write_text(
         "# a comment\n"
@@ -21,6 +20,8 @@ def test_load_dotenv_parses_comments_quotes_and_blanks(tmp_path, monkeypatch):
         'FOO="quoted value"\n'
         "BAR = bare \n"
         "BAZ='single'\n"
+        "QUX=bare value # inline comment\n"
+        'QUUX="quoted" # trailing comment\n'
         "not a kv line\n"
     )
 
@@ -28,6 +29,8 @@ def test_load_dotenv_parses_comments_quotes_and_blanks(tmp_path, monkeypatch):
     assert os.environ["FOO"] == "quoted value"
     assert os.environ["BAR"] == "bare"
     assert os.environ["BAZ"] == "single"
+    assert os.environ["QUX"] == "bare value"   # inline comment dropped
+    assert os.environ["QUUX"] == "quoted"      # comment after closing quote ignored
 
 
 def test_load_dotenv_missing_file_returns_false(tmp_path):
