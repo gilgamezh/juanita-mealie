@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Minimal web frontend for juanita: paste a URL, get a Mealie recipe.
+"""Minimal web frontend for juanita: paste a URL or recipe text, get a Mealie recipe.
 
 Wraps the existing CLI pipeline (fetch_video -> extract_recipe -> push_to_mealie)
 behind a small FastAPI app. Extraction takes 30s+ (yt-dlp fetch + a Claude
@@ -36,7 +36,14 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from juanita.cli import Mealie, extract_recipe, fetch_video, load_config, push_to_mealie
+from juanita.cli import (
+    Mealie,
+    extract_recipe,
+    fetch_video,
+    load_config,
+    push_to_mealie,
+    text_to_source_record,
+)
 
 log = logging.getLogger("juanita.web")
 
@@ -50,12 +57,27 @@ security = HTTPBasic()
 @dataclasses.dataclass
 class Job:
     id: str
-    url: str
+    kind: str  # "url" | "text"
+    source: str  # the submitted URL, or the full pasted text
     status: str = "queued"  # queued | running | done | error
     recipe_name: str | None = None
     mealie_link: str | None = None
     error: str | None = None
     created_at: float = dataclasses.field(default_factory=time.time)
+
+    @property
+    def preview(self) -> str:
+        """A short display label: the URL as-is, or the first line of pasted text."""
+        if self.kind == "url":
+            return self.source
+        first_line = next((ln.strip() for ln in self.source.splitlines() if ln.strip()), "")
+        if len(first_line) > 60:
+            return first_line[:60] + "…"
+        return first_line or "(pasted text)"
+
+
+def _job_dict(job: Job) -> dict:
+    return {**dataclasses.asdict(job), "preview": job.preview}
 
 
 class _JobStore:
@@ -127,7 +149,10 @@ def _run_job(
 ) -> None:
     job.status = "running"
     try:
-        source = fetch_video(job.url, cookies_file=cookies_file)
+        if job.kind == "text":
+            source = text_to_source_record(job.source)
+        else:
+            source = fetch_video(job.source, cookies_file=cookies_file)
         recipe = extract_recipe(client, source)
         job.recipe_name = recipe.name
         slug = push_to_mealie(mealie, recipe, source)
@@ -139,7 +164,7 @@ def _run_job(
     except Exception as e:  # noqa: BLE001 - surfaced to the UI, not raised
         job.error = str(e)
         job.status = "error"
-        log.error("import failed for %s: %s", job.url, e)
+        log.error("import failed for %s job %r: %s", job.kind, job.preview, e)
 
 
 def _check_auth(credentials: HTTPBasicCredentials = Depends(security)) -> None:  # noqa: B008
@@ -151,7 +176,8 @@ def _check_auth(credentials: HTTPBasicCredentials = Depends(security)) -> None: 
 
 
 class SubmitRequest(BaseModel):
-    url: str
+    url: str | None = None
+    text: str | None = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -161,10 +187,12 @@ def index(request: Request, _: None = Depends(_check_auth)):
 
 @app.post("/jobs")
 def submit(body: SubmitRequest, _: None = Depends(_check_auth)):
-    url = body.url.strip()
-    if not url:
-        raise HTTPException(status_code=400, detail="url is required")
-    job = Job(id=uuid.uuid4().hex[:12], url=url)
+    url = (body.url or "").strip()
+    text = (body.text or "").strip()
+    if bool(url) == bool(text):  # exactly one of the two must be given
+        raise HTTPException(status_code=400, detail="provide exactly one of url or text")
+    kind = "url" if url else "text"
+    job = Job(id=uuid.uuid4().hex[:12], kind=kind, source=url or text)
     jobs.add(job)
     executor.submit(_run_job, job, _client, _mealie, _cookies_file)
     return {"id": job.id}
@@ -175,13 +203,13 @@ def job_status(job_id: str, _: None = Depends(_check_auth)):
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="unknown job")
-    return dataclasses.asdict(job)
+    return _job_dict(job)
 
 
 @app.get("/jobs")
 def list_jobs(_: None = Depends(_check_auth)):
     """Recent jobs, for the page to refresh its history table without a reload."""
-    return {"jobs": [dataclasses.asdict(j) for j in jobs.recent()]}
+    return {"jobs": [_job_dict(j) for j in jobs.recent()]}
 
 
 def main() -> None:

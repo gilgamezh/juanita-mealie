@@ -90,6 +90,7 @@ def test_submit_and_poll_to_done(client, monkeypatch):
     assert job["status"] == "done"
     assert job["recipe_name"] == "Pan de nuez"
     assert job["mealie_link"] == "http://mealie.example.com/g/home/r/pan-de-nuez"
+    assert job["preview"] == "https://youtu.be/abc"
 
 
 def test_submit_surfaces_pipeline_error(client, monkeypatch):
@@ -106,9 +107,30 @@ def test_submit_surfaces_pipeline_error(client, monkeypatch):
     assert "yt-dlp exploded" in job["error"]
 
 
-def test_submit_requires_url(client):
-    r = client.post("/jobs", json={"url": "  "}, auth=AUTH)
-    assert r.status_code == 400
+def test_submit_requires_exactly_one_of_url_or_text(client):
+    assert client.post("/jobs", json={"url": "  "}, auth=AUTH).status_code == 400
+    assert client.post("/jobs", json={}, auth=AUTH).status_code == 400
+    assert client.post(
+        "/jobs", json={"url": "https://youtu.be/abc", "text": "stuff"}, auth=AUTH,
+    ).status_code == 400
+
+
+def test_submit_text_and_poll_to_done(client, monkeypatch):
+    fetch_calls = []
+    monkeypatch.setattr(web, "fetch_video", lambda url, **kw: fetch_calls.append(url))
+    monkeypatch.setattr(web, "extract_recipe", lambda client, source: make_recipe())
+    monkeypatch.setattr(web, "push_to_mealie", lambda mealie, recipe, source, **kw: "pan-de-nuez")
+
+    pasted = "Grandma's Bread\n\n365g flour\nwalnuts\n\nMix. Bake."
+    r = client.post("/jobs", json={"text": pasted}, auth=AUTH)
+    assert r.status_code == 200
+    job_id = r.json()["id"]
+
+    job = wait_for(client, job_id)
+    assert job["status"] == "done"
+    assert job["recipe_name"] == "Pan de nuez"
+    assert job["preview"] == "Grandma's Bread"
+    assert fetch_calls == []  # text jobs never touch yt-dlp
 
 
 def test_unknown_job_404s(client):
