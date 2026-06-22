@@ -53,16 +53,52 @@
     const result = document.getElementById("result");
     const urlInput = document.getElementById("url");
     const submitButton = form.querySelector("button");
+    const recentBody = document.getElementById("recent-jobs");
+
+    function escapeHtml(s) {
+      return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+      }[c]));
+    }
 
     function render(job) {
       if (job.status === "done") {
         result.innerHTML = `<span class="status-done">Done:</span> ` +
-          `<a href="${job.mealie_link}">${job.recipe_name}</a>`;
+          `<a href="${escapeHtml(job.mealie_link)}">${escapeHtml(job.recipe_name)}</a>`;
       } else if (job.status === "error") {
-        result.innerHTML = `<span class="status-error">Failed:</span> ${job.error}`;
+        result.innerHTML = `<span class="status-error">Failed:</span> ${escapeHtml(job.error)}`;
       } else {
-        result.innerHTML = `<span class="status-${job.status}">${job.status}...</span> ${job.url}`;
+        result.innerHTML =
+          `<span class="status-${job.status}">${job.status}...</span> ${escapeHtml(job.url)}`;
       }
+    }
+
+    function renderRecent(jobsList) {
+      if (jobsList.length === 0) {
+        recentBody.innerHTML = `<tr><td colspan="3">No imports yet.</td></tr>`;
+        return;
+      }
+      recentBody.innerHTML = jobsList.map((job) => {
+        let recipeCell = "&mdash;";
+        if (job.mealie_link) {
+          recipeCell = `<a href="${escapeHtml(job.mealie_link)}">` +
+            `${escapeHtml(job.recipe_name || job.mealie_link)}</a>`;
+        } else if (job.error) {
+          recipeCell = escapeHtml(job.error);
+        }
+        return `<tr>
+          <td>${escapeHtml(job.url)}</td>
+          <td class="status-${job.status}">${job.status}</td>
+          <td>${recipeCell}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    async function refreshRecent() {
+      const res = await fetch("/jobs");
+      if (!res.ok) return;
+      const { jobs: recent } = await res.json();
+      renderRecent(recent);
     }
 
     async function poll(id) {
@@ -73,6 +109,7 @@
         setTimeout(() => poll(id), 2000);
       } else {
         submitButton.disabled = false;
+        refreshRecent();
       }
     }
 
@@ -85,7 +122,7 @@
         body: JSON.stringify({ url: urlInput.value }),
       });
       if (!res.ok) {
-        result.innerHTML = `<span class="status-error">Failed:</span> ${(await res.json()).detail}`;
+        result.innerHTML = `<span class="status-error">Failed:</span> ${escapeHtml((await res.json()).detail)}`;
         submitButton.disabled = false;
         return;
       }
@@ -93,6 +130,8 @@
       urlInput.value = "";
       poll(id);
     });
+
+    setInterval(refreshRecent, 4000);
   </script>
 </body>
 </html>

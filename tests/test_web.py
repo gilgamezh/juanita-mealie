@@ -114,3 +114,18 @@ def test_submit_requires_url(client):
 def test_unknown_job_404s(client):
     r = client.get("/jobs/does-not-exist", auth=AUTH)
     assert r.status_code == 404
+
+
+def test_list_jobs_returns_recent(client, monkeypatch):
+    monkeypatch.setattr(web, "fetch_video", lambda url, **kw: source_record(source_url=url))
+    monkeypatch.setattr(web, "extract_recipe", lambda client, source: make_recipe())
+    monkeypatch.setattr(web, "push_to_mealie", lambda mealie, recipe, source, **kw: "pan-de-nuez")
+
+    job_id = client.post("/jobs", json={"url": "https://youtu.be/abc"}, auth=AUTH).json()["id"]
+    wait_for(client, job_id)
+
+    r = client.get("/jobs", auth=AUTH)
+    assert r.status_code == 200
+    listed = r.json()["jobs"]
+    assert listed[0]["id"] == job_id
+    assert listed[0]["status"] == "done"

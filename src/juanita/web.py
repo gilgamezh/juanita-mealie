@@ -178,6 +178,12 @@ def job_status(job_id: str, _: None = Depends(_check_auth)):
     return dataclasses.asdict(job)
 
 
+@app.get("/jobs")
+def list_jobs(_: None = Depends(_check_auth)):
+    """Recent jobs, for the page to refresh its history table without a reload."""
+    return {"jobs": [dataclasses.asdict(j) for j in jobs.recent()]}
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s")
     uvicorn.run(app, host="0.0.0.0", port=8000)  # noqa: S104 - intentional container bind
