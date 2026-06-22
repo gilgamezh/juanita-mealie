@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """
-Turn YouTube cooking videos (or local recipe text files) into Mealie recipes.
+Turn YouTube cooking videos, recipe webpages, or local recipe text files into
+Mealie recipes.
 
 Pipeline per source:
   1. yt-dlp  -> title, description, thumbnail, auto-generated transcript
-     (or, for a local file, just read its text)
+     (or, for a plain webpage, scrape its title/meta/text; for a local file,
+     just read its text)
   2. Claude  -> structured recipe JSON (name, ingredients, steps, tags)
   3. Mealie  -> create recipe, fill in details, attach the source URL + thumbnail
 
@@ -33,12 +35,14 @@ import os
 import stat
 import sys
 import time
+from html.parser import HTMLParser
 from pathlib import Path
 
 import anthropic
 import requests
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
 MODEL = "claude-opus-4-8"
 
@@ -212,6 +216,14 @@ def fetch_video(url: str, *, cookies_from_browser: str | None = None,
     log.debug("yt-dlp: extracting metadata for %s", url)
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
+        # yt-dlp falls back to its "generic" extractor for any URL no site-
+        # specific extractor claims, grabbing whatever embeddable media it can
+        # find on the page (e.g. a background demo clip) rather than failing
+        # outright. That gives a bogus title and an empty transcript for an
+        # ordinary recipe page, so treat it the same as "not a video site" and
+        # let fetch_source() fall back to fetch_webpage instead.
+        if info.get("extractor_key") == "Generic":
+            raise DownloadError(f"{url}: no dedicated video extractor (generic page)")
         # Fetch captions inside the ydl session so the request carries yt-dlp's
         # headers/cookies — a bare urllib fetch gets 429'd by YouTube fast.
         transcript = _extract_transcript(ydl, info)
@@ -223,6 +235,24 @@ def fetch_video(url: str, *, cookies_from_browser: str | None = None,
         "thumbnail": info.get("thumbnail"),
         "body": transcript,
     }
+
+
+def fetch_source(url: str, *, cookies_from_browser: str | None = None,
+                 cookies_file: str | None = None) -> dict:
+    """Fetch a URL as a video first, falling back to a plain webpage.
+
+    Most recipe sites aren't videos, so yt-dlp raises DownloadError for them
+    (no extractor recognizes the URL) before ever touching captions/cookies —
+    that's the signal to retry as a generic page. A real video-site failure
+    (e.g. the friendly 429 RuntimeError from _download_caption) is not a
+    DownloadError and propagates as-is.
+    """
+    try:
+        return fetch_video(url, cookies_from_browser=cookies_from_browser,
+                           cookies_file=cookies_file)
+    except DownloadError:
+        log.debug("yt-dlp doesn't recognize %s as a video; trying it as a webpage", url)
+        return fetch_webpage(url)
 
 
 # ---- 1b. Local text files ---------------------------------------------------
@@ -244,6 +274,82 @@ def load_text_file(path: str) -> dict:
         "source_url": None,
         "thumbnail": None,
         "body": text,
+    }
+
+
+# ---- 1c. Generic webpages ----------------------------------------------------
+
+_BROWSER_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; juanita-mealie recipe importer)"}
+
+
+class _PageParser(HTMLParser):
+    """Pulls <title>, <meta name/property> tags, and visible text out of HTML.
+
+    Used to turn a plain recipe webpage into a source record without adding an
+    HTML-parsing dependency: stdlib html.parser is enough for title/meta/text.
+    """
+
+    _SKIP_TAGS = frozenset({"script", "style", "noscript", "svg", "template"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title = ""
+        self.meta: dict[str, str] = {}
+        self._skip_depth = 0
+        self._in_title = False
+        self._chunks: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._SKIP_TAGS:
+            self._skip_depth += 1
+        elif tag == "title":
+            self._in_title = True
+        elif tag == "meta":
+            attrs_d = dict(attrs)
+            key, content = attrs_d.get("property") or attrs_d.get("name"), attrs_d.get("content")
+            if key and content:
+                self.meta[key] = content
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SKIP_TAGS:
+            self._skip_depth = max(0, self._skip_depth - 1)
+        elif tag == "title":
+            self._in_title = False
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            return
+        if self._in_title:
+            self.title += data
+            return
+        text = data.strip()
+        if text:
+            self._chunks.append(text)
+
+    def text(self) -> str:
+        return "\n".join(self._chunks)
+
+
+def fetch_webpage(url: str) -> dict:
+    """Fetch a plain (non-video) recipe webpage into a source record.
+
+    No yt-dlp/transcript involved: the page's visible text becomes `body` for
+    Claude to extract a recipe from, and `og:image`/`twitter:image` (when
+    present) becomes the thumbnail.
+    """
+    r = requests.get(url, headers=_BROWSER_HEADERS, timeout=30)
+    r.raise_for_status()
+    parser = _PageParser()
+    parser.feed(r.text)
+    title = parser.meta.get("og:title") or parser.title.strip() or url
+    description = parser.meta.get("og:description") or parser.meta.get("description") or ""
+    thumbnail = parser.meta.get("og:image") or parser.meta.get("twitter:image")
+    return {
+        "title": title.strip(),
+        "description": description.strip(),
+        "source_url": url,
+        "thumbnail": thumbnail,
+        "body": parser.text(),
     }
 
 
@@ -512,11 +618,18 @@ class Mealie:
                     self._unit_cache.setdefault(k.strip().lower(), u)
         self._units_loaded = True
 
-    def set_image_from_url(self, slug: str, image_url: str) -> None:
-        r = self.s.post(
+    def set_image(self, slug: str, content: bytes, extension: str) -> None:
+        """Upload image bytes directly (PUT, multipart), instead of POSTing the
+        URL and having Mealie fetch it server-side.
+
+        Some sites' anti-bot protection 403s Mealie's own outbound fetch (its
+        HTTP client looks nothing like a browser) even though the same URL is
+        fine for a normal client — see _download_image.
+        """
+        files = {"image": (f"image.{extension}", content)}
+        r = self.s.put(
             f"{self.base}/api/recipes/{slug}/image",
-            json={"url": image_url, "includeTags": False},
-            timeout=60,
+            files=files, data={"extension": extension}, timeout=60,
         )
         _check(r)
 
@@ -562,6 +675,28 @@ def _build_recipe_ingredient(mealie: Mealie, ing: Ingredient, *, link: bool = Tr
     }
 
 
+_IMAGE_EXTENSIONS = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "image/avif": "avif",
+}
+
+
+def _download_image(url: str) -> tuple[bytes, str]:
+    """Download a thumbnail ourselves, for set_image to upload as a file.
+
+    Mealie's own POST .../image {url} fetch is done by its HTTP client, which
+    some sites' anti-bot protection 403s even though the same URL is fine for
+    a normal client (e.g. with a browser User-Agent) — see _BROWSER_HEADERS.
+    """
+    r = requests.get(url, headers=_BROWSER_HEADERS, timeout=30)
+    r.raise_for_status()
+    content_type = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
+    return r.content, _IMAGE_EXTENSIONS.get(content_type, "jpg")
+
+
 def push_to_mealie(mealie: Mealie, recipe: Recipe, source: dict, *,
                    include_tags: bool = True, link_ingredients: bool = True) -> str:
     slug = mealie.create(recipe.name)
@@ -594,8 +729,10 @@ def push_to_mealie(mealie: Mealie, recipe: Recipe, source: dict, *,
 
     if source.get("thumbnail"):
         try:
-            mealie.set_image_from_url(slug, source["thumbnail"])
-            log.debug("mealie: set image from %s", source["thumbnail"])
+            content, ext = _download_image(source["thumbnail"])
+            mealie.set_image(slug, content, ext)
+            log.debug("mealie: set image (.%s, %d bytes) from %s",
+                      ext, len(content), source["thumbnail"])
         except Exception as e:  # noqa: BLE001 - image is best-effort
             log.warning("could not set image for %s: %s", slug, e)
 
@@ -624,9 +761,10 @@ def main(argv: list[str] | None = None) -> int:
         return _init_command(argv[1:])
 
     ap = argparse.ArgumentParser(
-        description="Import recipes into Mealie from YouTube videos or local text files.")
+        description="Import recipes into Mealie from YouTube videos, recipe webpages, "
+                    "or local text files.")
     ap.add_argument("urls", nargs="*", metavar="SOURCE",
-                    help="YouTube URLs and/or paths to local recipe text files")
+                    help="YouTube/recipe-webpage URLs and/or paths to local recipe text files")
     ap.add_argument("-c", "--config", metavar="FILE",
                     help="Path to a config file (KEY=VALUE). Run `juanita init` "
                          "to create one. Defaults to ./.env then the per-user config.")
@@ -689,8 +827,8 @@ def main(argv: list[str] | None = None) -> int:
             if os.path.isfile(item):
                 source = load_text_file(item)
             else:
-                source = fetch_video(item, cookies_from_browser=cookies_from_browser,
-                                     cookies_file=args.cookies)
+                source = fetch_source(item, cookies_from_browser=cookies_from_browser,
+                                      cookies_file=args.cookies)
             log.info("source: %r (%d chars)", source["title"], len(source["body"]))
             recipe = extract_recipe(client, source)
             log.info(
