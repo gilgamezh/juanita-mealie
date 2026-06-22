@@ -6,16 +6,17 @@ Guidance for Claude Code (and humans) working in this repository.
 
 `juanita` (distribution `juanita-mealie`) is a CLI that imports recipes into
 [Mealie](https://mealie.io) from different sources — currently YouTube cooking
-videos (via `yt-dlp` transcripts) and local recipe text files. Claude extracts a
-structured recipe and it's created via the Mealie REST API, with foods/units
-linked and the source URL + thumbnail attached when available.
+videos (via `yt-dlp` transcripts), plain recipe webpages (scraped directly),
+and local recipe text files. Claude extracts a structured recipe and it's
+created via the Mealie REST API, with foods/units linked and the source URL +
+thumbnail attached when available.
 
 The name honors Juanita Bordoy (1916–1995), Doña Petrona's TV kitchen assistant
 who did the prep and the dirty work in the background — see the "The name"
 section in the README, which also names the patrona/domestic-worker inequality
 behind it and cites Rebekah Pite's article. Keep that framing (affectionate, not
 flattening) if you touch the branding. Keep the pipeline source-agnostic too: new
-input types (a webpage, a photo, …) should plug into the same source-record →
+input types (a photo, a PDF, …) should plug into the same source-record →
 extract → push flow.
 
 ## Layout
@@ -36,18 +37,37 @@ Each input is loaded into a common **source record** dict —
 `{title, description, source_url, thumbnail, body}` — consumed by steps 2–3.
 `main()` auto-detects per positional: `os.path.isfile(item)` → `load_text_file`
 (a local recipe text file: `body` = file text, no `source_url`/`thumbnail`),
-otherwise → `fetch_video` (a URL).
+otherwise → `fetch_source` (a URL).
 
-1. **Fetch** (`fetch_video`) — `yt-dlp` extracts metadata without downloading the
-   video: `title`, `description`, `source_url`, `thumbnail`, and the
-   auto-generated captions as `body`. The transcript is parsed from the `json3` caption
-   track (`_extract_transcript` / `_download_caption`), preferring `en`, then
-   `en-US`, then `en-orig`, with a VTT/SRT fallback. Captions are fetched through
-   `ydl.urlopen` (yt-dlp's HTTP client, with its headers/cookies) rather than a
-   bare `urllib` request, and `_download_caption` retries on `HTTP 429` with
-   exponential backoff. Optional browser cookies (`cookiesfrombrowser` /
-   `cookiefile`) authenticate the request to dodge sustained 429s; on a final
-   429 it raises a friendly error pointing at the cookie flags.
+1. **Fetch**
+   - `fetch_source` — tries `fetch_video` first; if yt-dlp raises
+     `DownloadError` (no extractor recognizes the URL — i.e. it's not a video
+     site), falls back to `fetch_webpage`. `fetch_video` itself raises that
+     same `DownloadError` when yt-dlp resolves to its **generic** extractor
+     (`info["extractor_key"] == "Generic"`): the generic extractor grabs
+     whatever embeddable media it can find on an ordinary page (e.g. a
+     background demo clip) instead of failing outright, which would otherwise
+     produce a bogus title and an empty transcript for a plain recipe page —
+     so it's treated as "not really a video" too. A real video-site failure
+     (e.g. the friendly 429 `RuntimeError` from `_download_caption`) is not a
+     `DownloadError` and propagates instead of falling back.
+   - `fetch_video` — `yt-dlp` extracts metadata without downloading the
+     video: `title`, `description`, `source_url`, `thumbnail`, and the
+     auto-generated captions as `body`. The transcript is parsed from the `json3` caption
+     track (`_extract_transcript` / `_download_caption`), preferring `en`, then
+     `en-US`, then `en-orig`, with a VTT/SRT fallback. Captions are fetched through
+     `ydl.urlopen` (yt-dlp's HTTP client, with its headers/cookies) rather than a
+     bare `urllib` request, and `_download_caption` retries on `HTTP 429` with
+     exponential backoff. Optional browser cookies (`cookiesfrombrowser` /
+     `cookiefile`) authenticate the request to dodge sustained 429s; on a final
+     429 it raises a friendly error pointing at the cookie flags.
+   - `fetch_webpage` — for a plain (non-video) URL: a stdlib `html.parser`
+     subclass (`_PageParser`) pulls `<title>`, `<meta>` tags, and visible text
+     out of the page. `title` prefers `og:title`, `description` prefers
+     `og:description`, `thumbnail` is `og:image` (falling back to
+     `twitter:image`); `body` is the page's stripped visible text (script/style/
+     svg/template content excluded). No new dependency — deliberately not
+     BeautifulSoup, per the project's lean-deps convention.
 
 2. **Extract** (`extract_recipe`) — Claude (`claude-opus-4-8`, adaptive thinking,
    `effort: high`) turns `body` + title + description into a validated `Recipe`

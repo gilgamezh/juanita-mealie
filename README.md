@@ -1,9 +1,10 @@
 # Juanita
 
 **Juanita** imports recipes into [Mealie](https://mealie.io) from wherever they
-live. Point her at a YouTube cooking video or a local text file of notes and she
-does the prep: pulls the content (transcript via
-[`yt-dlp`](https://github.com/yt-dlp/yt-dlp), or just reads the file), has
+live. Point her at a YouTube cooking video, a recipe webpage, or a local text
+file of notes and she does the prep: pulls the content (transcript via
+[`yt-dlp`](https://github.com/yt-dlp/yt-dlp), the page's text for a plain
+webpage, or just reads the file), has
 [Claude](https://www.anthropic.com/claude) extract a structured recipe in the
 source's own language, and creates it in Mealie via the API — ingredients linked
 to your foods database, with the source URL and thumbnail attached when available.
@@ -90,8 +91,13 @@ juanita --` or use the alias above if you didn't install it globally):
 # One or more videos
 juanita https://youtu.be/wUewR4C0I_Y https://youtu.be/rzL07v6w8AA
 
+# A recipe webpage (anything yt-dlp doesn't recognize as a video falls back
+# to a plain page fetch — title, text, and og:image thumbnail)
+juanita https://hermanathome.com/lemongrass-chicken-in-crispy-rice-paper/
+
 # A local recipe text file — any positional that's a file on disk is read as
-# recipe notes instead of fetched as a URL. Videos and files can be mixed.
+# recipe notes instead of fetched as a URL. Videos, webpages, and files can
+# all be mixed together.
 juanita grandmas-walnut-bread.txt https://youtu.be/VIDEO_ID
 
 # Preview the parsed recipe without writing to Mealie (no Mealie token needed)
@@ -135,9 +141,11 @@ If you don't have cookies handy, waiting a few minutes usually clears it.
 
 ## How it works
 
-1. Each input becomes a common source record. For a **URL**, `yt-dlp` extracts
-   the title, description, thumbnail, and auto-generated transcript (no video
-   download); for a **local file**, the text is read as-is.
+1. Each input becomes a common source record. For a **video URL**, `yt-dlp`
+   extracts the title, description, thumbnail, and auto-generated transcript
+   (no video download); for any other **URL**, the page's title, `og:image`,
+   and visible text are scraped directly; for a **local file**, the text is
+   read as-is.
 2. **Claude** turns the source into a structured recipe (name, description,
    yield, instructions, tags, and ingredients split into quantity/unit/food/note)
    via structured outputs, in the source's own language.
@@ -157,6 +165,8 @@ See [CLAUDE.md](./CLAUDE.md) for the detailed pipeline and design notes.
 - For videos, the YouTube thumbnail is used as the recipe image. Mealie can't
   scrape recipes straight from YouTube URLs, which is why this transcript→LLM
   route exists.
+- For plain webpages, the image comes from the page's `og:image` (falling back
+  to `twitter:image`) when the page sets one; sites without either get no image.
 
 ## Development
 

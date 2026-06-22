@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Source loading: local text files and caption parsing/retry."""
+"""Source loading: local text files, caption parsing/retry, and webpages."""
 from __future__ import annotations
 
 import json
 
 import pytest
+from yt_dlp.utils import DownloadError
 
 from juanita import cli
 
@@ -119,3 +120,115 @@ def test_download_caption_429_via_status_attribute(monkeypatch):
     with pytest.raises(RuntimeError, match="429"):
         cli._download_caption(ydl, "http://x", "json3", attempts=2)
     assert ydl.calls == 2
+
+
+class FakeYoutubeDLCM:
+    """Fake YoutubeDL context manager exposing just extract_info, for fetch_video."""
+
+    def __init__(self, info: dict):
+        self._info = info
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def extract_info(self, url: str, download: bool = False) -> dict:
+        return self._info
+
+
+def test_fetch_video_raises_for_generic_extractor(monkeypatch):
+    # yt-dlp falls back to its "generic" extractor for any page no dedicated
+    # site extractor claims; that's not a real video, so fetch_video should
+    # raise DownloadError (the same signal as "URL unsupported") rather than
+    # returning a bogus title with an empty transcript.
+    info = {"extractor_key": "Generic", "title": "background-clip.MOV"}
+    monkeypatch.setattr(cli, "YoutubeDL", lambda opts: FakeYoutubeDLCM(info))
+
+    with pytest.raises(DownloadError):
+        cli.fetch_video("https://example.com/recipe")
+
+
+class FakeHTTPResponse:
+    def __init__(self, text: str):
+        self.text = text
+
+    def raise_for_status(self) -> None:
+        pass
+
+
+PAGE_HTML = """
+<html><head>
+<title>Fallback Title</title>
+<meta property="og:title" content="Lemongrass Chicken">
+<meta property="og:description" content="Crispy rice paper rolls.">
+<meta property="og:image" content="https://img.example/hero.jpg">
+<script>var x = "not visible";</script>
+<style>.a { color: red }</style>
+</head><body>
+<nav>Home</nav>
+<h1>Lemongrass Chicken</h1>
+<p>Mix 2 cups rice with lemongrass.</p>
+</body></html>
+"""
+
+
+def test_fetch_webpage_extracts_title_description_image_and_text(monkeypatch):
+    monkeypatch.setattr(cli.requests, "get", lambda url, **kw: FakeHTTPResponse(PAGE_HTML))
+
+    rec = cli.fetch_webpage("https://example.com/recipe")
+
+    assert rec["title"] == "Lemongrass Chicken"
+    assert rec["description"] == "Crispy rice paper rolls."
+    assert rec["thumbnail"] == "https://img.example/hero.jpg"
+    assert rec["source_url"] == "https://example.com/recipe"
+    assert "Mix 2 cups rice with lemongrass." in rec["body"]
+    assert "not visible" not in rec["body"]  # script content excluded
+    assert "color: red" not in rec["body"]  # style content excluded
+
+
+def test_fetch_webpage_falls_back_to_title_tag_without_og_meta(monkeypatch):
+    monkeypatch.setattr(
+        cli.requests, "get",
+        lambda url, **kw: FakeHTTPResponse("<html><head><title>Plain Page</title></head>"
+                                           "<body><p>hi</p></body></html>"),
+    )
+
+    rec = cli.fetch_webpage("https://example.com/x")
+    assert rec["title"] == "Plain Page"
+    assert rec["thumbnail"] is None
+
+
+def test_fetch_source_falls_back_to_webpage_on_download_error(monkeypatch):
+    def fake_fetch_video(url, **kw):
+        raise DownloadError("Unsupported URL")
+
+    monkeypatch.setattr(cli, "fetch_video", fake_fetch_video)
+    monkeypatch.setattr(cli, "fetch_webpage", lambda url: {"title": "from webpage"})
+
+    assert cli.fetch_source("https://example.com/recipe") == {"title": "from webpage"}
+
+
+def test_fetch_source_uses_video_when_yt_dlp_recognizes_it(monkeypatch):
+    monkeypatch.setattr(cli, "fetch_video", lambda url, **kw: {"title": "from video"})
+    monkeypatch.setattr(
+        cli, "fetch_webpage",
+        lambda url: pytest.fail("should not fall back when fetch_video succeeds"),
+    )
+
+    assert cli.fetch_source("https://youtu.be/abc") == {"title": "from video"}
+
+
+def test_fetch_source_does_not_swallow_non_download_errors(monkeypatch):
+    def fake_fetch_video(url, **kw):
+        raise RuntimeError("HTTP 429")
+
+    monkeypatch.setattr(cli, "fetch_video", fake_fetch_video)
+    monkeypatch.setattr(
+        cli, "fetch_webpage",
+        lambda url: pytest.fail("should not fall back on a non-DownloadError failure"),
+    )
+
+    with pytest.raises(RuntimeError, match="429"):
+        cli.fetch_source("https://youtu.be/abc")
