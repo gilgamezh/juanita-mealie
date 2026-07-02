@@ -11,6 +11,7 @@ from juanita.cli import (
     load_text_file,
     main,
     push_to_mealie,
+    text_to_source_record,
 )
 
 __version__ = "0.2.0"
@@ -24,5 +25,6 @@ __all__ = [
     "load_text_file",
     "main",
     "push_to_mealie",
+    "text_to_source_record",
     "__version__",
 ]
